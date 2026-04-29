@@ -1,7 +1,4 @@
-"""Prompt safety detector."""
-
-from __future__ import annotations
-
+"""Prompt 安全检测器。"""
 from pathlib import Path
 
 from poker.models import Finding, Severity
@@ -26,7 +23,7 @@ SAFE_BOUNDARY_HINTS = (
 
 
 class PromptDetector:
-    """Flag prompt-like files that may lack trust-boundary guidance."""
+    """检测缺少信任边界指引的 prompt 内容。"""
 
     name = "prompt-audit"
 

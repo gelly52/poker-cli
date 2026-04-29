@@ -1,9 +1,8 @@
 """Tests for built-in detectors."""
-
 from pathlib import Path
 
-from poker.detectors.prompts import PromptDetector
-from poker.detectors.secrets import SecretDetector
+from poker.capabilities.scan.detectors.prompts import PromptDetector
+from poker.capabilities.scan.detectors.secrets import SecretDetector
 
 
 def test_secret_detector_finds_generic_api_key() -> None:

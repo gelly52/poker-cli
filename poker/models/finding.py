@@ -1,13 +1,10 @@
-"""Shared data models for Poker CLI."""
-
-from __future__ import annotations
-
+"""安全扫描发现项数据模型。"""
 from dataclasses import asdict, dataclass
 from enum import Enum
 
 
 class Severity(str, Enum):
-    """Finding severity levels."""
+    """风险严重等级。"""
 
     CRITICAL = "critical"
     HIGH = "high"
@@ -18,7 +15,7 @@ class Severity(str, Enum):
 
 @dataclass(frozen=True)
 class Finding:
-    """A security finding discovered during a scan."""
+    """一条安全扫描发现。"""
 
     rule_id: str
     title: str

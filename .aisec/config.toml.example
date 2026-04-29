@@ -1,0 +1,18 @@
+# Poker CLI 项目配置示例
+# 复制此文件为 config.toml 并填入实际值：cp config.toml.example config.toml
+
+# LLM Provider（openai / anthropic / deepseek / qwen / local）
+provider.name = "openai"
+
+# 模型名称
+provider.model = "gpt-4o-mini"
+
+# API Base URL（留空使用默认）
+provider.base_url = ""
+
+# 配置 profile
+profile = "default"
+
+# 注意：API key 不写入文件，请使用环境变量
+# 示例：POKER_OPENAI_API_KEY=sk-your-key-here
+# 或旧版兼容：API_KEY=sk-your-key-here

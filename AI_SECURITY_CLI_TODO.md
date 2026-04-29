@@ -6,6 +6,44 @@
 
 ---
 
+## 0. 已确认决策
+
+以下决策在开发前必须确定，后续变更需显式更新本节。
+
+### 技术选型
+
+- [x] 采用 `langchain-core` 作为 Agent Runtime 基础，不引入完整 `langchain` 包。
+- [x] 社区集成（OpenAI / Anthropic / DeepSeek / Qwen 等）通过 `langchain-${provider}` 单独按需引入。
+- [x] Python / LangChain / OpenAI-compatible 项目优先识别。
+
+### 架构原则
+
+- [x] Agent Runtime 与能力模块（Capabilities）硬隔离：Agent 不关心具体能力实现，只负责 LLM 调用循环和工具路由。
+- [x] 每个能力模块独立，有自己的引擎、规则、报告格式。
+- [x] Agent 通过工具接口暴露能力；CLI 通过命令直接调用能力。两条路径互不干扰。
+- [x] workspace 是共享基础设施，不被任何单一能力独占。
+
+### MVP 决策
+
+- [x] MVP 形态：Agent + 单一扫描能力（scan）。Agent 能"看"和"说"，不能"改"。
+- [x] 第一批目标用户：开发 LLM 应用的 Python 开发者。
+- [x] 所有扫描默认只读。
+- [x] MVP 不允许工具自动修改代码。
+- [x] MVP 不允许工具执行 shell 命令。
+- [x] CI 不是一等公民，Phase 3 再做。
+- [x] SARIF 报告 Phase 3 再做。
+- [x] 离线 / 本地模型通过 langchain-core ChatModel 抽象自然支持，但不作为 MVP 验收条件。
+
+### 决策变更记录
+
+| 日期 | 决策项 | 变更内容 |
+|---|---|---|
+| 2026-04-29 | Agent Runtime 技术选型 | 确定采用 langchain-core，不引入完整 langchain |
+| 2026-04-29 | MVP 形态 | 确定为 Agent + scan 能力，非纯扫描器 |
+| 2026-04-29 | run_command Agent 工具 | 不做永久排除，视未来需求决定 |
+
+---
+
 ## 1. 产品定位
 
 ### 1.1 一句话定位
@@ -36,7 +74,7 @@
 
 ### 1.3 为什么用户要选择它
 
-用户选择它的理由应该不是“它也是一个 CLI Agent”，而是：
+用户选择它的理由应该不是"它也是一个 CLI Agent"，而是：
 
 1. 它理解 AI 应用特有风险
    - Prompt injection；
@@ -104,7 +142,7 @@
 
 建议将 Poker CLI 的产品类型定位为：
 
-“AI Security Code Agent” 或 “LLM App Security Agent”。
+"AI Security Code Agent" 或 "LLM App Security Agent"。
 
 它的核心不是替代 Claude Code，而是成为 Claude Code、Cursor、GitHub Copilot 之外的安全补位工具。
 
@@ -271,7 +309,23 @@
 - `config`
   - 查看和修改模型、策略、扫描器配置。
 
-### 3.2 可以后续删除的模板命令
+### 3.2 命令与阶段规划
+
+| 命令 | Phase 1 (MVP) | Phase 2 | Phase 3 | Phase 4 |
+|---|---|---|---|---|
+| `init` | P0 | | | |
+| `scan` | P0 | | | |
+| `chat` | P0 | | | |
+| `config` | P0 | | | |
+| `review` | | P1 | | |
+| `fix` | | P1 | | |
+| `prompt-audit` | | P1（独立命令） | | |
+| `tools-audit` | | P1（独立命令） | | |
+| `threat-model` | | | | P2 |
+
+> MVP 阶段，prompt-audit / tools-audit / mcp-audit 作为 `scan` 内部自动运行的扫描器子集，不提供独立命令。独立命令在 Phase 2 引入。
+
+### 3.3 可以后续删除的模板命令
 
 当前命令不是未来核心能力，可以删除或重命名：
 
@@ -301,18 +355,47 @@
 
 ### P0：基础目录重构
 
-建议演进为以下模块：
+演进为以下模块：
 
-- [ ] `cli/`：命令入口和参数解析。
-- [ ] `core/`：Agent runtime、事件循环、任务上下文。
-- [ ] `llm/`：模型 provider 抽象。
-- [ ] `workspace/`：项目文件、git、搜索、索引能力。
-- [ ] `tools/`：工具注册、执行、权限和审计。
-- [ ] `security/`：安全扫描、规则、风险模型。
-- [ ] `reports/`：Markdown / JSON / SARIF 报告生成。
-- [ ] `sessions/`：会话历史和上下文持久化。
-- [ ] `policies/`：工具权限、安全策略和确认规则。
-- [ ] `ui/`：Rich 输出、流式输出、diff 展示。
+```
+poker/
+├── cli/                       # 命令入口和参数解析
+├── config/                    # 配置加载、profile、环境变量
+├── agent/                     # Agent Runtime（基于 langchain-core）
+│   ├── runtime.py             # Agent 执行循环
+│   ├── llm.py                 # ChatModel provider 抽象
+│   ├── tools.py               # Agent 可调用的工具注册（面向 LLM）
+│   └── prompts.py             # System prompt 模板
+├── capabilities/              # Agent 能力模块（每个能力一个子目录）
+│   └── scan/                  # 安全扫描能力
+│       ├── engine.py          # 扫描编排（scan_path 等）
+│       ├── detectors/         # 扫描器实现
+│       └── report.py          # 扫描报告生成
+├── workspace/                 # 项目文件操作（共享基础设施）
+├── models/                    # 共享数据模型
+└── ui/                        # Rich 输出、流式输出、diff 展示
+```
+
+- [ ] 创建 `cli/` 目录，迁移命令入口和参数解析。
+- [ ] 创建 `config/` 目录，集中配置管理。
+- [ ] 创建 `agent/` 目录，实现 Agent Runtime。
+- [ ] 创建 `agent/llm.py`，ChatModel provider 抽象。
+- [ ] 创建 `agent/tools.py`，Agent 工具注册机制。
+- [ ] 创建 `agent/prompts.py`，System prompt 模板。
+- [ ] 创建 `capabilities/` 目录，作为能力模块父目录。
+- [ ] 创建 `capabilities/scan/` 目录，迁移现有扫描器。
+- [ ] 将现有 `poker/detectors/` 迁移到 `capabilities/scan/detectors/`。
+- [ ] 将现有 `poker/scanner.py` 迁移到 `capabilities/scan/engine.py`。
+- [ ] 将现有 `poker/reporter.py` 迁移到 `capabilities/scan/report.py`。
+- [ ] 保留 `workspace.py` 作为共享基础设施。
+- [ ] 创建 `ui/` 目录，Rich 输出和流式渲染。
+
+> **核心原则**：
+> - `agent/` 不关心具体能力实现，只负责 LLM 调用循环和工具路由。
+> - `capabilities/` 中每个模块独立，有自己的引擎、规则、报告格式。
+> - Agent 通过工具接口暴露能力；CLI 通过命令直接调用能力。两条路径互不干扰。
+> - `workspace/` 是共享基础设施，不被任何单一能力独占。
+> - 未来新增能力（threat_model、hardening 等）只需在 capabilities/ 下加目录，不改 agent 层。
 
 ### P0：配置系统重构
 
@@ -328,25 +411,37 @@
 
 ### P0：Agent Runtime 重构
 
+- [ ] 基于 `langchain-core` 实现 Agent 执行循环。
 - [ ] 将 `create_agent()` 拆分为 LLM 初始化、prompt 构建、工具注册、memory/session 管理。
 - [ ] 定义安全 Agent 的 system prompt。
 - [ ] 加入工具调用策略说明。
 - [ ] 加入风险等级输出规范。
 - [ ] 加入证据引用规范。
-- [ ] 加入“修改前必须展示 diff 并确认”的规则。
-- [ ] 加入“危险操作必须请求确认”的规则。
+- [ ] 加入"修改前必须展示 diff 并确认"的规则。
+- [ ] 加入"危险操作必须请求确认"的规则。
 - [ ] 支持流式输出。
 - [ ] 支持交互式会话。
-- [ ] 支持 session 持久化。
-- [ ] 支持中断和恢复。
+- [ ] 支持 session 持久化（Phase 2）。
+- [ ] 支持中断和恢复（Phase 2）。
 
 ---
 
 ## 5. 工具系统 TODO List
 
-### P0：工具抽象
+### 设计说明
 
-- [ ] 定义统一的 Tool 接口。
+Poker CLI 的工具系统分为两类，职责和生命周期完全不同：
+
+| 分类 | 位置 | 面向 | 说明 |
+|---|---|---|---|
+| **Agent 操作工具** | `agent/tools.py` 注册 | LLM | Agent 用来探索和操作项目的通用工具（read_file, search_text 等） |
+| **能力内部工具** | `capabilities/*/` 内部 | CLI / Agent | 能力模块的内部实现，如扫描器、审计器等。Agent 通过工具接口间接调用 |
+
+> Agent 操作工具是"Agent 的手"；能力内部工具是"Agent 的专业知识"。两者不在同一目录下，也不共享注册机制。
+
+### P0：Agent 操作工具抽象
+
+- [ ] 定义统一的 Agent Tool 接口（基于 langchain-core BaseTool）。
 - [ ] 每个工具必须包含名称、描述、输入 schema、输出 schema。
 - [ ] 每个工具必须标记风险等级：read-only、write、network、shell、destructive。
 - [ ] 每个工具必须声明是否需要用户确认。
@@ -356,7 +451,7 @@
 - [ ] 支持启用/禁用工具。
 - [ ] 支持按 policy 决定工具是否可用。
 
-### P0：基础项目工具
+### P0：基础项目工具（Agent 操作工具）
 
 - [ ] `list_files`：列出项目文件，尊重 `.gitignore`。
 - [ ] `read_file`：读取指定文件，限制项目根目录内访问。
@@ -364,16 +459,20 @@
 - [ ] `search_code`：代码符号或模式搜索。
 - [ ] `git_diff`：读取当前 git diff。
 - [ ] `git_status`：读取 git 状态。
+- [ ] `scan_project`：调用 capabilities.scan 引擎，返回扫描结果。（Agent 调用扫描能力的入口）
+
+### P1：写操作工具（Phase 2，fix 命令需要）
+
 - [ ] `write_file`：写文件，默认需要确认。
 - [ ] `apply_patch`：应用 patch，必须展示 diff 并确认。
 - [ ] `run_command`：执行命令，高风险，必须确认，并支持 allowlist。
 
-### P0：安全工具
+### P0：安全扫描器（能力内部工具，在 capabilities/scan/detectors/ 内）
 
-- [ ] `secret_scan`：扫描 API Key、token、私钥、密码。
+- [x] `secret_scan`：扫描 API Key、token、私钥、密码。
+- [x] `prompt_audit`：扫描 prompt injection / jailbreak 风险。
+- [x] `agent_tool_audit`：审查 LangChain @tools / function calling schema。
 - [ ] `dependency_audit`：检查 Python 依赖漏洞。
-- [ ] `prompt_audit`：扫描 prompt injection / jailbreak 风险。
-- [ ] `agent_tool_audit`：审查 Agent tools / function calling schema。
 - [ ] `mcp_audit`：审查 MCP Server 工具暴露风险。
 - [ ] `rag_audit`：审查 RAG 注入和数据泄露风险。
 - [ ] `unsafe_command_audit`：检查代码中危险命令执行。
@@ -395,13 +494,14 @@
 
 ### P0：风险模型
 
-- [ ] 定义统一 Finding 数据结构。
-- [ ] Finding 至少包含：id、title、severity、category、file、line、evidence、impact、recommendation、confidence。
-- [ ] severity 建议包含：critical、high、medium、low、info。
-- [ ] category 建议包含：secret、dependency、prompt-injection、tool-permission、rag-injection、mcp-risk、unsafe-code。
-- [ ] 支持 confidence：high、medium、low。
+- [x] 定义统一 Finding 数据结构。
+- [x] Finding 包含：rule_id、title、severity、category、path、line、evidence、recommendation。
+- [x] severity 包含：critical、high、medium、low、info。
+- [x] category 包含：secret、tool-permission、prompt-injection 等。
+- [ ] Finding 增加 confidence 字段：high、medium、low。
+- [ ] Finding 增加 impact 字段。
 - [ ] 支持去重。
-- [ ] 支持风险排序。
+- [ ] 支持风险排序（已实现按 severity 排序）。
 - [ ] 支持风险忽略和 baseline。
 
 ### P0：AI 应用识别
@@ -418,8 +518,8 @@
 
 ### P0：Prompt 安全审计
 
-- [ ] 扫描 prompt 文件和代码中的 prompt 字符串。
-- [ ] 检查是否区分 trusted / untrusted content。
+- [x] 扫描 prompt 文件和代码中的 prompt 字符串。
+- [x] 检查是否区分 trusted / untrusted content。
 - [ ] 检查是否允许用户或文档覆盖 system instruction。
 - [ ] 检查是否缺少数据泄露约束。
 - [ ] 检查是否缺少工具调用边界。
@@ -429,6 +529,10 @@
 ### P0：Agent Tool 安全审计
 
 - [x] 识别 LangChain `@tool`。
+- [x] 检查 shell 执行风险。
+- [x] 检查文件写操作风险。
+- [x] 检查网络请求风险。
+- [x] 检查高风险工具是否缺少用户确认。
 - [ ] 识别 OpenAI function calling schema。
 - [ ] 识别 MCP tools。
 - [ ] 检查工具描述是否过于宽泛。
@@ -437,7 +541,6 @@
 - [ ] 检查命令参数是否可能任意命令执行。
 - [ ] 检查网络请求是否可能 SSRF。
 - [ ] 检查敏感数据访问是否缺少权限判断。
-- [ ] 检查高风险工具是否缺少用户确认。
 
 ### P1：RAG 安全审计
 
@@ -473,8 +576,8 @@
 - [ ] 对风险按 severity 分组展示。
 - [ ] 每个风险展示文件、行号、证据、原因、建议。
 - [ ] 支持 `--format markdown`。
-- [ ] 支持 `--format json`。
-- [ ] 支持 `--format sarif`。
+- [x] 支持 `--format json`（已有 print_json）。
+- [x] 支持 `--format table`（已有 print_table）。
 - [ ] 支持 `--output report.md`。
 - [ ] 支持 `--fail-on high` 用于 CI。
 - [ ] 支持 `--quiet`。
@@ -487,10 +590,10 @@
 - [ ] 支持查看当前会话上下文。
 - [ ] 支持引用文件。
 - [ ] 支持让 Agent 解释某个 finding。
-- [ ] 支持让 Agent 生成修复 patch。
+- [ ] 支持让 Agent 生成修复建议。
 - [ ] 支持流式输出。
 - [ ] 支持 Ctrl+C 中断。
-- [ ] 支持会话保存和恢复。
+- [ ] 支持会话保存和恢复（Phase 2）。
 
 ### P0：安全确认体验
 
@@ -516,12 +619,12 @@
 
 ### P0：JSON 报告
 
-- [ ] 定义稳定 JSON schema。
+- [x] 定义稳定 JSON schema（已有 to_dict）。
+- [ ] JSON 报告增加扫描配置、扫描时间、项目元数据。
+- [x] 包含所有 findings。
 - [ ] 支持被 CI 或其他工具消费。
-- [ ] 包含扫描配置、扫描时间、项目元数据。
-- [ ] 包含所有 findings。
 
-### P1：SARIF 报告
+### P1：SARIF 报告（Phase 3）
 
 - [ ] 支持 SARIF 输出。
 - [ ] 使结果可接入 GitHub Code Scanning。
@@ -534,22 +637,30 @@
 
 ### P0：单元测试
 
-- [ ] 配置加载测试。
+- [x] 配置加载测试（待 config 模块完成后补全）。
 - [ ] CLI 参数测试。
-- [ ] Tool registry 测试。
+- [x] Tool registry 测试（已有 AgentToolDetector 测试）。
 - [ ] 文件访问边界测试。
-- [ ] 风险模型测试。
-- [ ] 报告生成测试。
+- [x] 风险模型测试（已有 Finding + Severity）。
+- [x] 报告生成测试（已有 print_table / print_json）。
 
 ### P0：安全规则测试
 
-- [ ] Secret 检测样例。
-- [ ] Prompt injection 检测样例。
-- [ ] Agent tool 风险检测样例。
+- [x] Secret 检测样例。
+- [x] Prompt injection 检测样例。
+- [x] Agent tool 风险检测样例。
 - [ ] RAG 注入检测样例。
 - [ ] MCP tool 风险检测样例。
 - [ ] 任意命令执行检测样例。
 - [ ] 路径穿越检测样例。
+- [ ] 补充至 10+ 安全测试样例（当前约 6 个，需补充）。
+
+### P0：Agent 交互测试
+
+- [ ] Agent 基本对话测试。
+- [ ] Agent 调用 scan_project 工具测试。
+- [ ] Agent 流式输出测试。
+- [ ] Agent Ctrl+C 中断测试。
 
 ### P1：集成测试
 
@@ -568,39 +679,56 @@
 
 第一版不要做成完整 Claude Code 替代品，而是聚焦于：
 
-“扫描当前 AI/Agent 项目，发现 AI 安全风险，并生成可读报告。”
+"一个能对话的 AI 安全 Agent，拥有扫描能力，能在项目目录下发现安全问题并解释结果。"
+
+Agent 在 MVP 阶段能"看"和"说"，不能"改"。
 
 ### 10.2 MVP 必须包含
 
 - [x] 新项目名和 CLI 命令名：Poker CLI / `poker`。
-- [x] `scan` 命令。
-- [ ] `review` 命令。
-- [ ] 基础文件读取和搜索工具。
-- [ ] Secret 扫描。
+- [x] `scan` 命令（直接调用扫描引擎）。
+- [ ] `chat` 命令（Agent 对话，可调用扫描能力）。
+- [ ] `init` 命令（初始化配置）。
+- [ ] `config` 命令（查看/修改配置）。
 - [x] LangChain `@tool` 风险审计。
-- [ ] Prompt 字符串安全审计。
-- [ ] Markdown 报告。
-- [ ] JSON 报告。
-- [ ] 基础配置文件。
+- [x] Secret 扫描。
+- [x] Prompt 字符串安全审计。
+- [x] Markdown 报告（table 格式）。
+- [x] JSON 报告。
+- [ ] 基础配置系统（provider + API key + 项目级配置）。
+- [ ] Agent Runtime（基于 langchain-core）。
+- [ ] 安全 Agent System Prompt。
 - [ ] 至少 10 个安全测试样例。
+- [ ] Agent 交互基本测试。
 
-### 10.3 MVP 暂不做
+### 10.3 MVP 暂不做（延后至后续阶段，非删除）
 
-- [ ] 自动修复写文件。
-- [ ] 任意 shell 执行。
-- [ ] 多 Agent 协作。
-- [ ] 复杂 RAG 深度分析。
-- [ ] 完整 MCP 运行时连接。
-- [ ] 插件市场。
-- [ ] 云端平台。
+| 延后项 | 目标阶段 | 理由 |
+|---|---|---|
+| 自动修复写文件 | Phase 2 | MVP Agent 只读不改 |
+| `review` 命令 | Phase 2 | scan 已覆盖核心，review 是增强 |
+| `fix` 命令 | Phase 2 | 依赖写操作工具 |
+| `prompt-audit` 独立命令 | Phase 2 | MVP 中作为 scan 子集运行 |
+| `tools-audit` 独立命令 | Phase 2 | 同上 |
+| `threat-model` 命令 | Phase 4 | 复杂度高，需要 Agent 深度推理 |
+| 任意 shell 执行 | 视需求决定 | 风险极高，需充分设计确认机制 |
+| 复杂 RAG 深度分析 | Phase 3 | 需要代码流分析能力 |
+| 完整 MCP 运行时连接 | Phase 2 | MVP 只做静态 schema 分析 |
+| SARIF 报告 | Phase 3 | 依赖 CI 模式 |
+| CI 模式 | Phase 3 | 需要稳定报告格式和退出码规范 |
+| Session 持久化 | Phase 2 | MVP 会话不需要持久化 |
+| 多 Agent 协作 | Phase 4 | 远期目标 |
+| 插件市场 | 远期 | 需要先有稳定的 API 契约 |
+| 云端平台 | 远期 | 产品形态可能变化 |
 
 ### 10.4 MVP 验收标准
 
 - [ ] 在一个示例 LangChain Agent 项目中，能发现高风险工具暴露问题。
 - [ ] 在一个示例 prompt 文件中，能发现 prompt injection 防护缺失。
 - [ ] 在一个示例项目中，能发现硬编码 API key。
-- [ ] 能输出 Markdown 报告。
-- [ ] 能输出 JSON 报告。
+- [ ] `scan` 命令能输出 Markdown 和 JSON 报告。
+- [ ] `chat` 命令能进入交互式 Agent 会话，回答安全问题。
+- [ ] Agent 能在 chat 中调用扫描能力，解释 findings。
 - [ ] 没有 API key 时，`help`、`init`、`version` 类命令仍可运行。
 - [ ] 所有扫描默认只读。
 - [ ] 所有高风险操作默认禁止或需要确认。
@@ -609,23 +737,32 @@
 
 ## 11. 后续演进路线
 
-### Phase 1：从 Demo 变成安全扫描 CLI
+### Phase 1（MVP）：从 Demo 变成安全 Agent CLI
 
-- [ ] 重命名项目。
-- [ ] 重写文档。
-- [ ] 增加 `scan`。
+- [x] 重命名项目。
+- [x] 重写文档。
+- [x] 增加 `scan`。
 - [ ] 增加基础安全规则。
 - [ ] 增加 Markdown / JSON 报告。
+- [ ] 增加 `chat` 命令。
+- [ ] 增加 Agent Runtime。
+- [ ] 增加配置系统。
 - [ ] 增加测试样例。
 
-### Phase 2：从扫描 CLI 变成安全 Agent
+### Phase 2：从 Agent CLI 变成交互式安全助手
 
-- [ ] 增加 `chat`。
+- [ ] 增加 `review` 命令。
+- [ ] 增加 `fix` 命令。
+- [ ] 增加写操作 Agent 工具（write_file, apply_patch）。
+- [ ] 增加独立 `prompt-audit` / `tools-audit` 命令。
 - [ ] 支持项目上下文。
 - [ ] 支持解释 finding。
 - [ ] 支持生成修复建议。
 - [ ] 支持展示 diff。
 - [ ] 支持用户确认后应用修复。
+- [ ] 支持会话持久化和恢复。
+- [ ] MCP 静态 schema 分析。
+- [ ] RAG 基础审计。
 
 ### Phase 3：从本地工具变成团队流程工具
 
@@ -635,15 +772,17 @@
 - [ ] 支持团队策略配置。
 - [ ] 支持自定义规则。
 - [ ] 支持审计日志。
+- [ ] RAG 深度分析。
 
 ### Phase 4：形成 AI 安全特色能力
 
 - [ ] 深度 Prompt Injection 检测。
-- [ ] 深度 RAG 安全审计。
-- [ ] MCP 安全审计。
+- [ ] MCP 安全审计（运行时连接）。
 - [ ] Agent 权限建模。
+- [ ] `threat-model` 命令。
 - [ ] AI 应用威胁建模。
 - [ ] 自动生成安全测试用例。
+- [ ] 多 Agent 协作。
 
 ---
 
@@ -671,31 +810,63 @@
 - [x] `echo` 工具。
 - [x] 泛化的 `run` 命令。
 - [ ] 模板式 Roadmap。
-- [ ] Poker 相关命名。
-- [ ] “通用 AI Agent Framework” 的定位描述。
+- [ ] "通用 AI Agent Framework" 的定位描述。
+
+### 迁移计划（对应第4节目录重构）
+
+| 当前位置 | 迁移目标 | 说明 |
+|---|---|---|
+| `poker/cli.py` | `poker/cli/scan.py` + `poker/cli/chat.py` | 按命令拆分 |
+| `poker/scanner.py` | `poker/capabilities/scan/engine.py` | 扫描编排 |
+| `poker/detectors/` | `poker/capabilities/scan/detectors/` | 扫描器实现 |
+| `poker/reporter.py` | `poker/capabilities/scan/report.py` | 报告生成 |
+| `poker/models.py` | `poker/models/finding.py` | 数据模型 |
+| `poker/workspace.py` | `poker/workspace/` | 共享文件操作 |
 
 ---
 
-## 13. 最关键的决策
+## 13. 关键决策
 
-在继续开发前，必须先回答这些问题：
+### 已决定
 
-- [x] 产品名是什么？Poker CLI。
-- [ ] 第一批目标用户是谁？
-- [ ] MVP 是“扫描器”优先，还是“交互式 Agent”优先？
-- [ ] 是否优先支持 Python / LangChain 生态？
-- [ ] 是否优先支持 MCP 安全审计？
-- [ ] 是否允许工具自动修改代码？
-- [ ] 是否允许工具执行 shell 命令？
-- [ ] CI 场景是否是一等公民？
-- [ ] 报告格式是否需要 SARIF？
-- [ ] 项目是否要兼容离线 / 本地模型？
+- [x] 产品名：Poker CLI。
+- [x] MVP 形态：Agent + 单一扫描能力。Agent 能"看"和"说"，不能"改"。
+- [x] Agent Runtime 基于 langchain-core，不引入完整 langchain。
+- [x] 第一批目标用户：开发 LLM 应用的 Python 开发者。
+- [x] Python / LangChain / OpenAI-compatible 项目优先。
+- [x] 所有扫描默认只读。
+- [x] 自动修复 MVP 只生成 diff，不直接写入。
+- [x] CI 输出支持 JSON 和 Markdown，SARIF 放到 Phase 3。
+- [x] AI 安全能力作为差异化核心，不追求完整替代 Claude Code。
+- [x] Agent Runtime 与能力模块硬隔离。
+- [x] MCP 安全审计 Phase 2 再做。
+- [x] 离线 / 本地模型通过 ChatModel 抽象支持，但不作为 MVP 验收条件。
 
-建议当前决策：
+### 待后续决定
 
-- [ ] MVP 以扫描器优先。
-- [ ] Python / LangChain / OpenAI-compatible 项目优先。
-- [ ] 所有扫描默认只读。
-- [ ] 自动修复第一版只生成 diff，不直接写入。
-- [ ] CI 输出支持 JSON 和 Markdown，SARIF 放到下一阶段。
-- [ ] 将 AI 安全能力作为差异化核心，而不是追求完整替代 Claude Code。
+- [ ] 是否允许工具自动修改代码？→ Phase 2 `fix` 命令时决定。
+- [ ] 是否允许工具执行 shell 命令？→ 视未来需求决定，不做永久排除。
+- [ ] CI 是否一等公民？→ Phase 3 决定。
+- [ ] 报告格式是否需要 SARIF？→ Phase 3 决定。
+- [ ] `run_command` Agent 工具是否最终引入？→ 需充分设计确认机制后再决定。
+
+---
+
+## 14. 错误处理与可观测性
+
+### P0：错误处理策略
+
+- [ ] LLM 调用失败处理：超时重试（指数退避）、限流降级、token 超限截断提示。
+- [ ] 扫描器异常容错：文件编码错误跳过并记录、AST 解析失败跳过并记录、单个扫描器异常不影响其他扫描器。
+- [ ] Agent 调用工具失败：结构化错误返回 + 用户提示，不静默跳过。
+- [ ] 配置缺失处理：缺 API key 时给出明确指引，不抛模糊异常。
+- [ ] 全局异常兜底：未预期异常输出友好提示 + 调试信息获取方式。
+
+### P0：可观测性
+
+- [ ] 日志级别：ERROR / WARNING / INFO / DEBUG，默认 WARNING。
+- [ ] `--verbose` 输出 INFO 级别日志。
+- [ ] `--debug` 输出 DEBUG 级别日志（含 LLM 请求/响应摘要）。
+- [ ] 审计日志：所有 Agent 工具调用记录到本地审计文件。
+- [ ] 扫描跳过记录：被跳过的文件和原因写入报告附录。
+- [ ] Agent 执行 trace：记录 Agent 的每一步决策和工具调用链路（Phase 2）。

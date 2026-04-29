@@ -1,8 +1,7 @@
 """Tests for agent tool risk detection."""
-
 from pathlib import Path
 
-from poker.detectors.agent_tools import AgentToolDetector
+from poker.capabilities.scan.detectors.agent_tools import AgentToolDetector
 
 
 def _rule_ids(content: str) -> set[str]:

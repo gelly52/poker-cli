@@ -10,6 +10,8 @@ packages = [{include = "poker"}]
 python = "^3.10"
 typer = {extras = ["all"], version = "^0.16.0"}
 rich = "^13.0.0"
+langchain-core = "^0.3"
+langchain-openai = "^0.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"

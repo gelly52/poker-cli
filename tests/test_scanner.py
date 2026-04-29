@@ -1,6 +1,5 @@
 """Tests for scanner orchestration."""
-
-from poker.scanner import scan_path
+from poker.capabilities.scan.engine import scan_path
 
 
 def test_scan_path_scans_single_file(tmp_path) -> None:

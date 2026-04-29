@@ -1,7 +1,4 @@
-"""Agent tool risk detector."""
-
-from __future__ import annotations
-
+"""Agent 工具风险检测器。"""
 import ast
 from pathlib import Path
 
@@ -21,7 +18,7 @@ FILE_WRITE_METHODS = ("write_text", "write_bytes", "unlink", "rename", "replace"
 
 
 class AgentToolDetector:
-    """Detect risky capabilities exposed through LangChain-style tools."""
+    """检测 LangChain 风格工具中暴露的危险能力。"""
 
     name = "agent-tool-audit"
 

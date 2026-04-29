@@ -138,6 +138,8 @@ cython_debug/
 # IDEs
 .vscode/
 .idea/
+.snow/
+.omc/
 *.swp
 *.swo
 *~
@@ -145,3 +147,8 @@ cython_debug/
 # OS
 .DS_Store
 Thumbs.db
+
+# Poker CLI - 项目级配置（含敏感信息，不提交）
+.aisec/config.toml
+
+# 允许提交 example 文件（不忽略 .aisec/config.toml.example）

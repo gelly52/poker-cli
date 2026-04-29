@@ -1,7 +1,4 @@
-"""Report rendering helpers."""
-
-from __future__ import annotations
-
+"""扫描报告渲染。"""
 import json
 
 from rich.console import Console
@@ -11,7 +8,7 @@ from poker.models import Finding
 
 
 def print_table(console: Console, findings: list[Finding]) -> None:
-    """Render findings as a compact terminal table."""
+    """将扫描结果渲染为终端表格。"""
 
     if not findings:
         console.print("[green]No findings detected.[/green]")
@@ -35,7 +32,7 @@ def print_table(console: Console, findings: list[Finding]) -> None:
 
 
 def print_json(console: Console, findings: list[Finding]) -> None:
-    """Render findings as JSON."""
+    """将扫描结果渲染为 JSON。"""
 
     console.print(
         json.dumps([finding.to_dict() for finding in findings], ensure_ascii=False, indent=2)

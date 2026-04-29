@@ -1,7 +1,4 @@
-"""Secret scanning detector."""
-
-from __future__ import annotations
-
+"""Secret 扫描检测器。"""
 import re
 from pathlib import Path
 
@@ -17,7 +14,7 @@ SECRET_PATTERNS = {
 
 
 class SecretDetector:
-    """Detect likely hard-coded credentials."""
+    """检测硬编码的凭据信息。"""
 
     name = "secret-scan"
 

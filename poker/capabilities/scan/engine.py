@@ -1,17 +1,14 @@
-"""Scan orchestration."""
-
-from __future__ import annotations
-
+"""扫描编排引擎。"""
 from pathlib import Path
 from typing import Protocol
 
-from poker.detectors import AgentToolDetector, PromptDetector, SecretDetector
+from poker.capabilities.scan.detectors import AgentToolDetector, PromptDetector, SecretDetector
 from poker.models import Finding
 from poker.workspace import iter_text_files, read_text
 
 
 class Detector(Protocol):
-    """Minimal detector contract."""
+    """扫描器协议：所有扫描器必须实现此接口。"""
 
     name: str
 
@@ -34,7 +31,7 @@ SEVERITY_RANK = {
 
 
 def scan_path(root: Path, detectors: tuple[Detector, ...] = DEFAULT_DETECTORS) -> list[Finding]:
-    """Run all detectors against a file or directory."""
+    """对文件或目录执行全部扫描器。"""
 
     root = root.resolve()
     findings: list[Finding] = []
