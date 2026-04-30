@@ -69,7 +69,7 @@ def _run_checks(config) -> list[tuple[str, bool, str]]:
     checks.append((
         "API Key",
         has_key,
-        "已设置" if has_key else f"未设置，请设置环境变量 POKER_{config.provider.name.upper()}_API_KEY",
+        "已设置" if has_key else f"未设置，请在 .aisec/config.toml 写入 provider.api_key，或设置环境变量 POKER_{config.provider.name.upper()}_API_KEY",
     ))
 
     # 检查2：provider 是否有效

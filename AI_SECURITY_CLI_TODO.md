@@ -36,11 +36,11 @@
 
 ### 决策变更记录
 
-| 日期 | 决策项 | 变更内容 |
-|---|---|---|
+| 日期       | 决策项                 | 变更内容                                      |
+| ---------- | ---------------------- | --------------------------------------------- |
 | 2026-04-29 | Agent Runtime 技术选型 | 确定采用 langchain-core，不引入完整 langchain |
-| 2026-04-29 | MVP 形态 | 确定为 Agent + scan 能力，非纯扫描器 |
-| 2026-04-29 | run_command Agent 工具 | 不做永久排除，视未来需求决定 |
+| 2026-04-29 | MVP 形态               | 确定为 Agent + scan 能力，非纯扫描器          |
+| 2026-04-29 | run_command Agent 工具 | 不做永久排除，视未来需求决定                  |
 
 ---
 
@@ -77,6 +77,7 @@
 用户选择它的理由应该不是"它也是一个 CLI Agent"，而是：
 
 1. 它理解 AI 应用特有风险
+
    - Prompt injection；
    - Jailbreak；
    - RAG 数据污染；
@@ -87,6 +88,7 @@
    - 不安全的系统提示词和安全边界缺失。
 
 2. 它能在本地项目上下文中工作
+
    - 读取当前仓库；
    - 理解目录结构；
    - 搜索代码；
@@ -96,6 +98,7 @@
    - 输出可追踪的证据和修复建议。
 
 3. 它不是只报问题，而是能辅助修复
+
    - 给出风险等级；
    - 给出受影响文件和代码位置；
    - 解释攻击路径；
@@ -267,42 +270,50 @@
 以下命令可以替代当前的 `ping` / `run` / `version`：
 
 - `init`
+
   - 初始化项目配置；
   - 生成默认安全策略；
   - 检测项目类型；
   - 选择模型 provider。
 
 - `scan`
+
   - 对当前项目进行安全扫描；
   - 默认只读；
   - 输出人类可读报告；
   - 支持 JSON / SARIF / Markdown 输出。
 
 - `review`
+
   - 审查指定文件、目录或 git diff；
   - 适合 PR 前本地检查；
   - 输出风险、证据和建议。
 
 - `chat`
+
   - 进入交互式安全 Agent 会话；
   - 可以围绕当前项目问问题；
   - 支持上下文记忆；
   - 支持工具调用确认。
 
 - `fix`
+
   - 针对某个风险生成修复方案；
   - 默认只生成 diff；
   - 用户确认后才写入文件。
 
 - `threat-model`
+
   - 根据项目结构和代码生成威胁模型；
   - 输出资产、入口、信任边界、攻击路径和缓解建议。
 
 - `prompt-audit`
+
   - 专门审查 prompt 和 LLM 指令；
   - 检查 prompt injection / jailbreak / data exfiltration 风险。
 
 - `tools-audit`
+
   - 专门审查 Agent 工具、MCP 工具、LangChain tools、function calling schema；
   - 检查权限边界和参数校验。
 
@@ -311,17 +322,17 @@
 
 ### 3.2 命令与阶段规划
 
-| 命令 | Phase 1 (MVP) | Phase 2 | Phase 3 | Phase 4 |
-|---|---|---|---|---|
-| `init` | P0 | | | |
-| `scan` | P0 | | | |
-| `chat` | P0 | | | |
-| `config` | P0 | | | |
-| `review` | | P1 | | |
-| `fix` | | P1 | | |
-| `prompt-audit` | | P1（独立命令） | | |
-| `tools-audit` | | P1（独立命令） | | |
-| `threat-model` | | | | P2 |
+| 命令           | Phase 1 (MVP) | Phase 2        | Phase 3 | Phase 4 |
+| -------------- | ------------- | -------------- | ------- | ------- |
+| `init`         | P0            |                |         |         |
+| `scan`         | P0            |                |         |         |
+| `chat`         | P0            |                |         |         |
+| `config`       | P0            |                |         |         |
+| `review`       |               | P1             |         |         |
+| `fix`          |               | P1             |         |         |
+| `prompt-audit` |               | P1（独立命令） |         |         |
+| `tools-audit`  |               | P1（独立命令） |         |         |
+| `threat-model` |               |                |         | P2      |
 
 > MVP 阶段，prompt-audit / tools-audit / mcp-audit 作为 `scan` 内部自动运行的扫描器子集，不提供独立命令。独立命令在 Phase 2 引入。
 
@@ -330,9 +341,11 @@
 当前命令不是未来核心能力，可以删除或重命名：
 
 - `ping`
+
   - 可被 `doctor` 或 `config test` 替代。
 
 - `run`
+
   - 过于泛化，可被 `chat` / `scan` / `review` / `fix` 替代。
 
 - `version`
@@ -376,21 +389,22 @@ poker/
 └── ui/                        # Rich 输出、流式输出、diff 展示
 ```
 
-- [ ] 创建 `cli/` 目录，迁移命令入口和参数解析。
-- [ ] 创建 `config/` 目录，集中配置管理。
-- [ ] 创建 `agent/` 目录，实现 Agent Runtime。
-- [ ] 创建 `agent/llm.py`，ChatModel provider 抽象。
-- [ ] 创建 `agent/tools.py`，Agent 工具注册机制。
-- [ ] 创建 `agent/prompts.py`，System prompt 模板。
-- [ ] 创建 `capabilities/` 目录，作为能力模块父目录。
-- [ ] 创建 `capabilities/scan/` 目录，迁移现有扫描器。
-- [ ] 将现有 `poker/detectors/` 迁移到 `capabilities/scan/detectors/`。
-- [ ] 将现有 `poker/scanner.py` 迁移到 `capabilities/scan/engine.py`。
-- [ ] 将现有 `poker/reporter.py` 迁移到 `capabilities/scan/report.py`。
-- [ ] 保留 `workspace.py` 作为共享基础设施。
-- [ ] 创建 `ui/` 目录，Rich 输出和流式渲染。
+- [x] 创建 `cli/` 目录，迁移命令入口和参数解析。
+- [x] 创建 `config/` 目录，集中配置管理。
+- [x] 创建 `agent/` 目录，实现 Agent Runtime。
+- [x] 创建 `agent/llm.py`，ChatModel provider 抽象。
+- [x] 创建 `agent/tools.py`，Agent 工具注册机制。
+- [x] 创建 `agent/prompts.py`，System prompt 模板。
+- [x] 创建 `capabilities/` 目录，作为能力模块父目录。
+- [x] 创建 `capabilities/scan/` 目录，迁移现有扫描器。
+- [x] 将现有 `poker/detectors/` 迁移到 `capabilities/scan/detectors/`。
+- [x] 将现有 `poker/scanner.py` 迁移到 `capabilities/scan/engine.py`。
+- [x] 将现有 `poker/reporter.py` 迁移到 `capabilities/scan/report.py`。
+- [x] 保留 `workspace.py` 作为共享基础设施。
+- [x] 创建 `ui/` 目录，Rich 输出和流式渲染。
 
 > **核心原则**：
+>
 > - `agent/` 不关心具体能力实现，只负责 LLM 调用循环和工具路由。
 > - `capabilities/` 中每个模块独立，有自己的引擎、规则、报告格式。
 > - Agent 通过工具接口暴露能力；CLI 通过命令直接调用能力。两条路径互不干扰。
@@ -399,28 +413,28 @@ poker/
 
 ### P0：配置系统重构
 
-- [ ] 避免在 import 阶段强制加载 `API_KEY`。
-- [ ] 允许 `help`、`version`、`init` 等命令在没有 API Key 时正常运行。
-- [ ] 支持多 provider 配置：OpenAI、Anthropic、DeepSeek、Qwen、本地 OpenAI-compatible endpoint。
-- [ ] 支持 profile，例如 `default`、`local`、`ci`。
-- [ ] 支持项目级配置文件，例如 `.aisec/config.toml`。
-- [ ] 支持用户级配置文件，例如用户主目录下的配置。
-- [ ] 支持环境变量覆盖配置文件。
-- [ ] 支持 `doctor` 或 `config test` 检查配置是否有效。
-- [ ] 对敏感配置做脱敏展示。
+- [x] 避免在 import 阶段强制加载 `API_KEY`。
+- [x] 允许 `help`、`version`、`init` 等命令在没有 API Key 时正常运行。
+- [x] 支持多 provider 配置：OpenAI、Anthropic、DeepSeek、Qwen、本地 OpenAI-compatible endpoint。
+- [x] 支持 profile，例如 `default`、`local`、`ci`。
+- [x] 支持项目级配置文件，例如 `.aisec/config.toml`。
+- [x] 支持用户级配置文件，例如用户主目录下的配置。
+- [x] 支持环境变量覆盖配置文件。
+- [x] 支持 `doctor` 或 `config test` 检查配置是否有效。
+- [x] 对敏感配置做脱敏展示。
 
 ### P0：Agent Runtime 重构
 
-- [ ] 基于 `langchain-core` 实现 Agent 执行循环。
-- [ ] 将 `create_agent()` 拆分为 LLM 初始化、prompt 构建、工具注册、memory/session 管理。
-- [ ] 定义安全 Agent 的 system prompt。
-- [ ] 加入工具调用策略说明。
-- [ ] 加入风险等级输出规范。
-- [ ] 加入证据引用规范。
-- [ ] 加入"修改前必须展示 diff 并确认"的规则。
-- [ ] 加入"危险操作必须请求确认"的规则。
-- [ ] 支持流式输出。
-- [ ] 支持交互式会话。
+- [x] 基于 `langchain-core` 实现 Agent 执行循环。
+- [x] 将 `create_agent()` 拆分为 LLM 初始化、prompt 构建、工具注册、memory/session 管理。
+- [x] 定义安全 Agent 的 system prompt。
+- [x] 加入工具调用策略说明。
+- [x] 加入风险等级输出规范。
+- [x] 加入证据引用规范。
+- [x] 加入"修改前必须展示 diff 并确认"的规则。
+- [x] 加入"危险操作必须请求确认"的规则。
+- [x] 支持流式输出。
+- [x] 支持交互式会话。
 - [ ] 支持 session 持久化（Phase 2）。
 - [ ] 支持中断和恢复（Phase 2）。
 
@@ -432,10 +446,10 @@ poker/
 
 Poker CLI 的工具系统分为两类，职责和生命周期完全不同：
 
-| 分类 | 位置 | 面向 | 说明 |
-|---|---|---|---|
-| **Agent 操作工具** | `agent/tools.py` 注册 | LLM | Agent 用来探索和操作项目的通用工具（read_file, search_text 等） |
-| **能力内部工具** | `capabilities/*/` 内部 | CLI / Agent | 能力模块的内部实现，如扫描器、审计器等。Agent 通过工具接口间接调用 |
+| 分类               | 位置                   | 面向        | 说明                                                               |
+| ------------------ | ---------------------- | ----------- | ------------------------------------------------------------------ |
+| **Agent 操作工具** | `agent/tools.py` 注册  | LLM         | Agent 用来探索和操作项目的通用工具（read_file, search_text 等）    |
+| **能力内部工具**   | `capabilities/*/` 内部 | CLI / Agent | 能力模块的内部实现，如扫描器、审计器等。Agent 通过工具接口间接调用 |
 
 > Agent 操作工具是"Agent 的手"；能力内部工具是"Agent 的专业知识"。两者不在同一目录下，也不共享注册机制。
 
@@ -459,7 +473,7 @@ Poker CLI 的工具系统分为两类，职责和生命周期完全不同：
 - [ ] `search_code`：代码符号或模式搜索。
 - [ ] `git_diff`：读取当前 git diff。
 - [ ] `git_status`：读取 git 状态。
-- [ ] `scan_project`：调用 capabilities.scan 引擎，返回扫描结果。（Agent 调用扫描能力的入口）
+- [x] `scan_project`：调用 capabilities.scan 引擎，返回扫描结果。（Agent 调用扫描能力的入口）
 
 ### P1：写操作工具（Phase 2，fix 命令需要）
 
@@ -501,7 +515,7 @@ Poker CLI 的工具系统分为两类，职责和生命周期完全不同：
 - [ ] Finding 增加 confidence 字段：high、medium、low。
 - [ ] Finding 增加 impact 字段。
 - [ ] 支持去重。
-- [ ] 支持风险排序（已实现按 severity 排序）。
+- [x] 支持风险排序（已实现按 severity 排序）。
 - [ ] 支持风险忽略和 baseline。
 
 ### P0：AI 应用识别
@@ -575,23 +589,23 @@ Poker CLI 的工具系统分为两类，职责和生命周期完全不同：
 - [ ] 使用 Rich 输出清晰的扫描进度。
 - [ ] 对风险按 severity 分组展示。
 - [ ] 每个风险展示文件、行号、证据、原因、建议。
-- [ ] 支持 `--format markdown`。
+- [x] 支持 `--format markdown`。
 - [x] 支持 `--format json`（已有 print_json）。
 - [x] 支持 `--format table`（已有 print_table）。
-- [ ] 支持 `--output report.md`。
-- [ ] 支持 `--fail-on high` 用于 CI。
+- [x] 支持 `--output report.md`。
+- [x] 支持 `--fail-on high` 用于 CI。
 - [ ] 支持 `--quiet`。
 - [ ] 支持 `--verbose`。
 
 ### P0：交互式 Agent 体验
 
-- [ ] 增加 `chat` 命令。
-- [ ] 支持连续对话。
+- [x] 增加 `chat` / REPL 模式。
+- [x] 支持连续对话。
 - [ ] 支持查看当前会话上下文。
 - [ ] 支持引用文件。
-- [ ] 支持让 Agent 解释某个 finding。
-- [ ] 支持让 Agent 生成修复建议。
-- [ ] 支持流式输出。
+- [x] 支持让 Agent 解释某个 finding。
+- [x] 支持让 Agent 生成修复建议。
+- [x] 支持流式输出。
 - [ ] 支持 Ctrl+C 中断。
 - [ ] 支持会话保存和恢复（Phase 2）。
 
@@ -611,18 +625,18 @@ Poker CLI 的工具系统分为两类，职责和生命周期完全不同：
 
 ### P0：Markdown 报告
 
-- [ ] 生成项目安全总览。
-- [ ] 生成风险统计表。
+- [x] 生成项目安全总览。
+- [x] 生成风险统计表。
 - [ ] 按 severity 分组。
-- [ ] 每个 finding 包含证据和修复建议。
-- [ ] 生成可复制到 issue / PR 的说明。
+- [x] 每个 finding 包含证据和修复建议。
+- [x] 生成可复制到 issue / PR 的说明。
 
 ### P0：JSON 报告
 
 - [x] 定义稳定 JSON schema（已有 to_dict）。
-- [ ] JSON 报告增加扫描配置、扫描时间、项目元数据。
+- [x] JSON 报告增加扫描配置、扫描时间、项目元数据。
 - [x] 包含所有 findings。
-- [ ] 支持被 CI 或其他工具消费。
+- [x] 支持被 CI 或其他工具消费。
 
 ### P1：SARIF 报告（Phase 3）
 
@@ -687,39 +701,39 @@ Agent 在 MVP 阶段能"看"和"说"，不能"改"。
 
 - [x] 新项目名和 CLI 命令名：Poker CLI / `poker`。
 - [x] `scan` 命令（直接调用扫描引擎）。
-- [ ] `chat` 命令（Agent 对话，可调用扫描能力）。
-- [ ] `init` 命令（初始化配置）。
-- [ ] `config` 命令（查看/修改配置）。
+- [x] `chat` / REPL 模式（Agent 对话，可调用扫描能力）。
+- [x] `init` 命令（初始化配置）。
+- [x] `config` 命令（查看/修改配置）。
 - [x] LangChain `@tool` 风险审计。
 - [x] Secret 扫描。
 - [x] Prompt 字符串安全审计。
 - [x] Markdown 报告（table 格式）。
 - [x] JSON 报告。
-- [ ] 基础配置系统（provider + API key + 项目级配置）。
-- [ ] Agent Runtime（基于 langchain-core）。
-- [ ] 安全 Agent System Prompt。
+- [x] 基础配置系统（provider + API key + 项目级配置）。
+- [x] Agent Runtime（基于 langchain-core）。
+- [x] 安全 Agent System Prompt。
 - [ ] 至少 10 个安全测试样例。
 - [ ] Agent 交互基本测试。
 
 ### 10.3 MVP 暂不做（延后至后续阶段，非删除）
 
-| 延后项 | 目标阶段 | 理由 |
-|---|---|---|
-| 自动修复写文件 | Phase 2 | MVP Agent 只读不改 |
-| `review` 命令 | Phase 2 | scan 已覆盖核心，review 是增强 |
-| `fix` 命令 | Phase 2 | 依赖写操作工具 |
-| `prompt-audit` 独立命令 | Phase 2 | MVP 中作为 scan 子集运行 |
-| `tools-audit` 独立命令 | Phase 2 | 同上 |
-| `threat-model` 命令 | Phase 4 | 复杂度高，需要 Agent 深度推理 |
-| 任意 shell 执行 | 视需求决定 | 风险极高，需充分设计确认机制 |
-| 复杂 RAG 深度分析 | Phase 3 | 需要代码流分析能力 |
-| 完整 MCP 运行时连接 | Phase 2 | MVP 只做静态 schema 分析 |
-| SARIF 报告 | Phase 3 | 依赖 CI 模式 |
-| CI 模式 | Phase 3 | 需要稳定报告格式和退出码规范 |
-| Session 持久化 | Phase 2 | MVP 会话不需要持久化 |
-| 多 Agent 协作 | Phase 4 | 远期目标 |
-| 插件市场 | 远期 | 需要先有稳定的 API 契约 |
-| 云端平台 | 远期 | 产品形态可能变化 |
+| 延后项                  | 目标阶段   | 理由                           |
+| ----------------------- | ---------- | ------------------------------ |
+| 自动修复写文件          | Phase 2    | MVP Agent 只读不改             |
+| `review` 命令           | Phase 2    | scan 已覆盖核心，review 是增强 |
+| `fix` 命令              | Phase 2    | 依赖写操作工具                 |
+| `prompt-audit` 独立命令 | Phase 2    | MVP 中作为 scan 子集运行       |
+| `tools-audit` 独立命令  | Phase 2    | 同上                           |
+| `threat-model` 命令     | Phase 4    | 复杂度高，需要 Agent 深度推理  |
+| 任意 shell 执行         | 视需求决定 | 风险极高，需充分设计确认机制   |
+| 复杂 RAG 深度分析       | Phase 3    | 需要代码流分析能力             |
+| 完整 MCP 运行时连接     | Phase 2    | MVP 只做静态 schema 分析       |
+| SARIF 报告              | Phase 3    | 依赖 CI 模式                   |
+| CI 模式                 | Phase 3    | 需要稳定报告格式和退出码规范   |
+| Session 持久化          | Phase 2    | MVP 会话不需要持久化           |
+| 多 Agent 协作           | Phase 4    | 远期目标                       |
+| 插件市场                | 远期       | 需要先有稳定的 API 契约        |
+| 云端平台                | 远期       | 产品形态可能变化               |
 
 ### 10.4 MVP 验收标准
 
@@ -743,10 +757,10 @@ Agent 在 MVP 阶段能"看"和"说"，不能"改"。
 - [x] 重写文档。
 - [x] 增加 `scan`。
 - [ ] 增加基础安全规则。
-- [ ] 增加 Markdown / JSON 报告。
-- [ ] 增加 `chat` 命令。
-- [ ] 增加 Agent Runtime。
-- [ ] 增加配置系统。
+- [x] 增加 Markdown / JSON 报告。
+- [x] 增加 `chat` / REPL 模式。
+- [x] 增加 Agent Runtime。
+- [x] 增加配置系统。
 - [ ] 增加测试样例。
 
 ### Phase 2：从 Agent CLI 变成交互式安全助手
@@ -812,16 +826,16 @@ Agent 在 MVP 阶段能"看"和"说"，不能"改"。
 - [ ] 模板式 Roadmap。
 - [ ] "通用 AI Agent Framework" 的定位描述。
 
-### 迁移计划（对应第4节目录重构）
+### 迁移计划（对应第 4 节目录重构）
 
-| 当前位置 | 迁移目标 | 说明 |
-|---|---|---|
-| `poker/cli.py` | `poker/cli/scan.py` + `poker/cli/chat.py` | 按命令拆分 |
-| `poker/scanner.py` | `poker/capabilities/scan/engine.py` | 扫描编排 |
-| `poker/detectors/` | `poker/capabilities/scan/detectors/` | 扫描器实现 |
-| `poker/reporter.py` | `poker/capabilities/scan/report.py` | 报告生成 |
-| `poker/models.py` | `poker/models/finding.py` | 数据模型 |
-| `poker/workspace.py` | `poker/workspace/` | 共享文件操作 |
+| 当前位置             | 迁移目标                                  | 说明         |
+| -------------------- | ----------------------------------------- | ------------ |
+| `poker/cli.py`       | `poker/cli/scan.py` + `poker/cli/chat.py` | 按命令拆分   |
+| `poker/scanner.py`   | `poker/capabilities/scan/engine.py`       | 扫描编排     |
+| `poker/detectors/`   | `poker/capabilities/scan/detectors/`      | 扫描器实现   |
+| `poker/reporter.py`  | `poker/capabilities/scan/report.py`       | 报告生成     |
+| `poker/models.py`    | `poker/models/finding.py`                 | 数据模型     |
+| `poker/workspace.py` | `poker/workspace/`                        | 共享文件操作 |
 
 ---
 

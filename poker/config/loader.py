@@ -122,8 +122,8 @@ def save_project_config(config: PokerConfig, project_root: Path) -> None:
         f"provider.name = \"{config.provider.name}\"",
         f"provider.model = \"{config.provider.model}\"",
         f"provider.base_url = \"{config.provider.base_url}\"",
-        f"profile = \"{config.profile}\"",
-        "",
-        "# 注意：API key 不写入文件，请使用环境变量 POKER_{PROVIDER}_API_KEY",
     ]
+    if config.provider.api_key:
+        lines.append(f"provider.api_key = \"{config.provider.api_key}\"")
+    lines.append(f"profile = \"{config.profile}\"")
     config_path.write_text("\n".join(lines), encoding="utf-8")

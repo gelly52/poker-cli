@@ -65,7 +65,11 @@ def _run_agent_messages(llm: BaseChatModel, messages: list[BaseMessage]) -> AIMe
 
 def create_agent_with_history(llm: BaseChatModel) -> RunnableWithMessageHistory:
     """创建带 RunnableWithMessageHistory 的 Agent。"""
-    runnable = RunnableLambda(lambda messages: _run_agent_messages(llm, messages))
+
+    def run_with_messages(messages: list[BaseMessage]) -> AIMessage:
+        return _run_agent_messages(llm, messages)
+
+    runnable = RunnableLambda(run_with_messages)
     return RunnableWithMessageHistory(runnable, get_session_history)
 
 
@@ -96,7 +100,11 @@ def stream_agent(
     """
     history = get_session_history(session_id)
     human_message = HumanMessage(content=user_input)
-    messages: list[BaseMessage] = [SystemMessage(content=SECURITY_AGENT_PROMPT), *history.messages, human_message]
+    messages: list[BaseMessage] = [
+        SystemMessage(content=SECURITY_AGENT_PROMPT),
+        *history.messages,
+        human_message,
+    ]
 
     tools = get_agent_tools()
     tool_map = {t.name: t for t in tools}

@@ -1,20 +1,59 @@
 """Agent 工具风险检测器。"""
 import ast
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from poker.models import Finding, Severity
 
 CONFIRMATION_HINTS = ("confirm", "approval", "approve", "consent", "permission")
 SHELL_CALLS = {
     "os.system",
+    "os.popen",
     "subprocess.run",
     "subprocess.call",
     "subprocess.Popen",
     "subprocess.check_call",
     "subprocess.check_output",
+    "asyncio.create_subprocess_exec",
+    "asyncio.create_subprocess_shell",
 }
 NETWORK_PREFIXES = ("requests.", "httpx.", "urllib.request.")
-FILE_WRITE_METHODS = ("write_text", "write_bytes", "unlink", "rename", "replace")
+FILE_ACCESS_CALLS = ("open", "Path.open", "read_text", "read_bytes", "write_text", "write_bytes", "unlink", "rename", "replace")
+
+
+@dataclass(frozen=True)
+class ToolRiskRule:
+    rule_id: str
+    title: str
+    severity: Severity
+    matcher: Callable[[ast.Call, str], bool]
+    recommendation: str
+
+
+TOOL_RISK_RULES = (
+    ToolRiskRule(
+        "arbitrary-command-execution",
+        "Agent tool exposes command execution",
+        Severity.HIGH,
+        lambda call, call_name: call_name in SHELL_CALLS,
+        "Require explicit user approval and restrict commands with an allowlist.",
+    ),
+    ToolRiskRule(
+        "unsafe-file-access",
+        "Agent tool can access local files",
+        Severity.MEDIUM,
+        lambda call, call_name: _is_file_access_call(call, call_name),
+        "Restrict paths to a workspace allowlist and require confirmation for writes or deletes.",
+    ),
+    ToolRiskRule(
+        "ssrf-risk",
+        "Agent tool can fetch user-controlled URLs",
+        Severity.MEDIUM,
+        lambda call, call_name: call_name.startswith(NETWORK_PREFIXES),
+        "Validate URLs, block private networks, and restrict outbound destinations.",
+    ),
+)
 
 
 class AgentToolDetector:
@@ -45,60 +84,18 @@ def _scan_tool_function(
     content: str,
 ) -> list[Finding]:
     findings: list[Finding] = []
-    risky = False
 
     for child in ast.walk(node):
         if not isinstance(child, ast.Call):
             continue
 
         call_name = _call_name(child.func)
-        if call_name in SHELL_CALLS:
-            risky = True
-            findings.append(
-                Finding(
-                    rule_id="agent-tool-shell-execution",
-                    title="Agent tool exposes shell execution",
-                    severity=Severity.HIGH,
-                    category="tool-permission",
-                    path=relative_path,
-                    line=child.lineno,
-                    evidence=f"Tool `{node.name}` calls `{call_name}`.",
-                    recommendation="Require explicit user approval and restrict commands with an allowlist.",
-                )
-            )
-
-        if _is_file_write_call(child, call_name):
-            risky = True
-            findings.append(
-                Finding(
-                    rule_id="agent-tool-file-write",
-                    title="Agent tool can modify files",
-                    severity=Severity.MEDIUM,
-                    category="tool-permission",
-                    path=relative_path,
-                    line=child.lineno,
-                    evidence=f"Tool `{node.name}` calls `{call_name}`.",
-                    recommendation="Show a diff and require confirmation before writing or deleting files.",
-                )
-            )
-
-        if call_name.startswith(NETWORK_PREFIXES):
-            risky = True
-            findings.append(
-                Finding(
-                    rule_id="agent-tool-network-access",
-                    title="Agent tool can make network requests",
-                    severity=Severity.MEDIUM,
-                    category="tool-permission",
-                    path=relative_path,
-                    line=child.lineno,
-                    evidence=f"Tool `{node.name}` calls `{call_name}`.",
-                    recommendation="Restrict outbound destinations and require approval for sensitive requests.",
-                )
-            )
+        for rule in TOOL_RISK_RULES:
+            if rule.matcher(child, call_name):
+                findings.append(_finding(rule, node.name, call_name, relative_path, child.lineno))
 
     source = ast.get_source_segment(content, node) or ""
-    if risky and not any(hint in source.lower() for hint in CONFIRMATION_HINTS):
+    if findings and not any(hint in source.lower() for hint in CONFIRMATION_HINTS):
         findings.append(
             Finding(
                 rule_id="agent-tool-missing-confirmation",
@@ -113,6 +110,19 @@ def _scan_tool_function(
         )
 
     return findings
+
+
+def _finding(rule: ToolRiskRule, tool_name: str, call_name: str, path: str, line: int) -> Finding:
+    return Finding(
+        rule_id=rule.rule_id,
+        title=rule.title,
+        severity=rule.severity,
+        category="tool-permission",
+        path=path,
+        line=line,
+        evidence=f"Tool `{tool_name}` calls `{call_name}`.",
+        recommendation=rule.recommendation,
+    )
 
 
 def _is_tool(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
@@ -138,23 +148,7 @@ def _call_name(node: ast.AST) -> str:
     return ""
 
 
-def _is_file_write_call(call: ast.Call, call_name: str) -> bool:
-    if call_name.endswith(FILE_WRITE_METHODS):
+def _is_file_access_call(call: ast.Call, call_name: str) -> bool:
+    if call_name.endswith(FILE_ACCESS_CALLS):
         return True
-
-    if call_name not in {"open", "Path.open"} and not call_name.endswith(".open"):
-        return False
-
-    mode = _open_mode(call)
-    return any(flag in mode for flag in ("w", "a", "x", "+"))
-
-
-def _open_mode(call: ast.Call) -> str:
-    if len(call.args) >= 2 and isinstance(call.args[1], ast.Constant):
-        return str(call.args[1].value)
-
-    for keyword in call.keywords:
-        if keyword.arg == "mode" and isinstance(keyword.value, ast.Constant):
-            return str(keyword.value.value)
-
-    return "r"
+    return call_name == "open" or call_name.endswith(".open")
