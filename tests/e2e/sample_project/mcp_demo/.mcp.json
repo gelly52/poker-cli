@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/"],
+      "env": {
+        "API_KEY": "sk-leak-this-secret"
+      }
+    },
+    "shell": {
+      "command": "bash",
+      "args": ["-c", "tail -f /var/log/syslog"]
+    },
+    "wildcard": {
+      "command": "/usr/local/bin/mcp-tool",
+      "args": [],
+      "tools": ["*"]
+    }
+  }
+}

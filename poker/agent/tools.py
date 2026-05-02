@@ -14,7 +14,8 @@ from typing import Any
 from langchain_core.tools import tool
 
 from poker.capabilities.scan.engine import scan_path
-from poker.state import append_audit_log
+from poker.state import append_audit_log, save_backup
+from poker.ui.diff import show_diff_and_confirm
 from poker.workspace import iter_text_files
 
 # 模块级状态：当前 project root；REPL 启动 / !cd 后调用 set_project_root() 更新
@@ -218,6 +219,197 @@ def scan_project(target: str = "") -> str:
     return "\n".join(lines)
 
 
+@tool
+def write_file(path: str, content: str) -> str:
+    """整文件覆写。写盘前显示 diff 等用户确认；用户拒绝则原文件不动并自动备份。
+
+    路径必须在 project root 内，越界拒绝。父目录不存在会自动创建。
+    """
+    _audit("write_file", path=path)
+    target = _resolve_within_root(path)
+    if target is None:
+        return f"错误：路径越界 {path}"
+    if target.exists() and target.is_dir():
+        return f"错误：目标是目录 {target}"
+
+    if target.exists():
+        try:
+            old = target.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            return f"错误：读取原文件失败 {e}"
+    else:
+        old = ""
+
+    if not show_diff_and_confirm(old, content, path):
+        return "用户拒绝"
+
+    try:
+        backup_path = save_backup(_project_root, target)
+    except Exception as e:
+        return f"错误：备份失败 {e}"
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    except OSError as e:
+        return f"错误：写入失败 {e}"
+
+    _audit("write_file_applied", path=path, backup=str(backup_path))
+    rel = target.relative_to(_project_root).as_posix()
+    return f"已写入 {rel}（{len(content)} 字符；备份 {backup_path.name}）"
+
+
+@tool
+def apply_patch(path: str, diff: str) -> str:
+    """应用 unified diff 到指定文件。失败 / 用户拒绝时原文件不动并自动备份。
+
+    diff 必须是标准 unified diff（含 @@ hunk 头）。context / 删除行必须与
+    原文件严格匹配；任何不匹配视为无效 diff，结构化返回错误。
+    """
+    _audit("apply_patch", path=path)
+    target = _resolve_within_root(path)
+    if target is None:
+        return f"错误：路径越界 {path}"
+    if not target.exists():
+        return f"错误：文件不存在 {target}"
+    if not target.is_file():
+        return f"错误：不是文件 {target}"
+
+    try:
+        old = target.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return f"错误：读取原文件失败 {e}"
+
+    try:
+        new = _apply_unified_diff(old, diff)
+    except ValueError as e:
+        return f"错误：diff 应用失败 {e}"
+
+    if new == old:
+        return "（diff 应用后内容未变化）"
+
+    if not show_diff_and_confirm(old, new, path):
+        return "用户拒绝"
+
+    try:
+        backup_path = save_backup(_project_root, target)
+    except Exception as e:
+        return f"错误：备份失败 {e}"
+
+    try:
+        target.write_text(new, encoding="utf-8")
+    except OSError as e:
+        return f"错误：写入失败 {e}"
+
+    _audit("apply_patch_applied", path=path, backup=str(backup_path))
+    rel = target.relative_to(_project_root).as_posix()
+    return f"已应用 patch 到 {rel}（备份 {backup_path.name}）"
+
+
+_HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@")
+
+
+def _apply_unified_diff(original: str, diff_text: str) -> str:
+    """最小可用的 unified diff 应用器。
+
+    支持：`---` / `+++` 头（忽略）、`@@ -L1,N1 +L2,N2 @@` hunk 头、
+    `' '` context、`'-'` 删除、`'+'` 新增、`'\\'` no-newline 标记。
+    任何 context / 删除不匹配抛 ValueError。
+    """
+    if not diff_text.strip():
+        raise ValueError("diff 为空")
+
+    keep_trailing = original.endswith("\n")
+    src_lines = original.split("\n")
+    if keep_trailing and src_lines and src_lines[-1] == "":
+        src_lines.pop()
+
+    diff_lines = diff_text.split("\n")
+    out: list[str] = []
+    i = 0  # index into src_lines
+    j = 0  # index into diff_lines
+    n = len(diff_lines)
+    saw_hunk = False
+
+    while j < n:
+        line = diff_lines[j]
+
+        if line.startswith("---") or line.startswith("+++"):
+            j += 1
+            continue
+
+        if line.startswith("@@"):
+            m = _HUNK_HEADER_RE.match(line)
+            if not m:
+                raise ValueError(f"不合法的 hunk 头: {line!r}")
+            old_start = max(0, int(m.group(1)) - 1)  # 1-based -> 0-based
+            while i < old_start:
+                if i >= len(src_lines):
+                    raise ValueError("hunk 起始位置超出原文件")
+                out.append(src_lines[i])
+                i += 1
+            saw_hunk = True
+            j += 1
+            continue
+
+        if not saw_hunk:
+            # hunk 头前不允许出现内容行（除了 --- / +++）
+            if line == "":
+                j += 1
+                continue
+            raise ValueError(f"hunk 头之前出现意外内容: {line!r}")
+
+        if line.startswith("\\"):  # \ No newline at end of file
+            j += 1
+            continue
+
+        if line == "" and j == n - 1:
+            j += 1
+            continue
+
+        if line.startswith(" "):
+            text = line[1:]
+            if i >= len(src_lines) or src_lines[i] != text:
+                actual = src_lines[i] if i < len(src_lines) else "<EOF>"
+                raise ValueError(
+                    f"context 不匹配（原文件第 {i + 1} 行）：期望 {text!r}，实际 {actual!r}"
+                )
+            out.append(text)
+            i += 1
+            j += 1
+            continue
+
+        if line.startswith("-"):
+            text = line[1:]
+            if i >= len(src_lines) or src_lines[i] != text:
+                actual = src_lines[i] if i < len(src_lines) else "<EOF>"
+                raise ValueError(
+                    f"删除行不匹配（原文件第 {i + 1} 行）：期望 {text!r}，实际 {actual!r}"
+                )
+            i += 1
+            j += 1
+            continue
+
+        if line.startswith("+"):
+            out.append(line[1:])
+            j += 1
+            continue
+
+        raise ValueError(f"不识别的 diff 行：{line!r}")
+
+    if not saw_hunk:
+        raise ValueError("diff 中没有 @@ hunk 头")
+
+    while i < len(src_lines):
+        out.append(src_lines[i])
+        i += 1
+
+    result = "\n".join(out)
+    if keep_trailing:
+        result += "\n"
+    return result
+
+
 def get_agent_tools() -> list:
     """返回 Agent 当前可用的工具列表。新增工具只需在此注册。"""
     return [
@@ -228,4 +420,6 @@ def get_agent_tools() -> list:
         git_diff,
         git_status,
         scan_project,
+        write_file,
+        apply_patch,
     ]

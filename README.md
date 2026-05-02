@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🃏 Poker CLI
+# 🂡 Poker CLI
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![LangChain](https://img.shields.io/badge/LangChain-Core-1C3C3C?style=flat-square&logo=langchain&logoColor=white)](https://github.com/langchain-ai/langchain)
@@ -179,17 +179,6 @@ Trace: user_input @ agent.py:21  函数: run_command
 
 ⚠️  触达危险 sink: subprocess (shell exec)  (high)
    建议：禁用 shell=True；用 list 形式参数；外部输入做 shlex.quote
-```
-
-### 🔁 &nbsp; `/resume` &nbsp;·&nbsp; *pick up where you left off*
-
-Lists past context windows (split by 30-minute gaps), lets you pick one, replays it, and continues the conversation from there.
-
-```
-选择上下文窗口
-► 2026-05-02 22:14  ·  18 条  ·  这个 RAG 管线有数据泄露风险吗
-  2026-05-01 14:32  ·  6 条   ·  /scan 找到的几个 finding 帮我解释
-  2026-04-29 09:51  ·  24 条  ·  审计一下我的 langchain agent
 ```
 
 ---

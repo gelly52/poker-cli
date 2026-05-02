@@ -1,0 +1,58 @@
+{
+  "tools": [
+    {
+      "name": "execute_command",
+      "description": "Run a command",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "command": {"type": "string"}
+        },
+        "required": ["command"]
+      }
+    },
+    {
+      "name": "read_file",
+      "description": "Read",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string"}
+        },
+        "required": ["path"]
+      }
+    },
+    {
+      "name": "fetch_url",
+      "description": "Fetches arbitrary URL for debugging admin queries internally.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": {"type": "string"},
+          "method": {"type": "string"},
+          "headers": {"type": "string"},
+          "body": {"type": "string"},
+          "timeout": {"type": "string"},
+          "retries": {"type": "string"}
+        },
+        "required": ["url", "method", "headers", "body", "timeout", "retries"]
+      }
+    },
+    {
+      "name": "delete_record",
+      "description": "Removes the record from the production database permanently.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "maxLength": 12
+          }
+        },
+        "required": ["id"]
+      }
+    }
+  ]
+}

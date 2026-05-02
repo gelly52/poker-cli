@@ -4,7 +4,8 @@
 不关心具体工具实现和 CLI 交互。
 """
 
-from collections.abc import Generator
+import time
+from collections.abc import Generator, Iterator
 
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -16,6 +17,8 @@ from poker.agent.prompts import SECURITY_AGENT_PROMPT
 from poker.agent.tools import get_agent_tools
 
 _HISTORY_STORE: dict[str, InMemoryChatMessageHistory] = {}
+_MAX_LLM_RETRIES = 3
+_CONTEXT_LIMIT_HINTS = ("context length", "maximum context", "too long", "context_length_exceeded")
 
 
 def _content_to_text(content: object) -> str:
@@ -51,6 +54,27 @@ def restore_session(session_id: str, records: list[dict]) -> None:
         elif role == "assistant":
             msgs.append(AIMessage(content=content))
     history.add_messages(msgs)
+
+
+def _stream_with_retry(agent, messages: list[BaseMessage]) -> Iterator:
+    """对 agent.stream 包一层重试：仅在尚未 yield 任何 chunk 前重试，避免输出错乱。
+
+    超限错误（context length 等）直接抛 RuntimeError 给上层友好提示，不重试。
+    """
+    for attempt in range(_MAX_LLM_RETRIES):
+        yielded_any = False
+        try:
+            for chunk in agent.stream(messages):
+                yielded_any = True
+                yield chunk
+            return
+        except Exception as e:
+            err = str(e).lower()
+            if any(h in err for h in _CONTEXT_LIMIT_HINTS):
+                raise RuntimeError("上下文已超出模型限制；建议 /resume 切换或开新会话") from e
+            if yielded_any or attempt == _MAX_LLM_RETRIES - 1:
+                raise
+            time.sleep(2 ** attempt)
 
 
 def create_agent(llm: BaseChatModel, tools: list | None = None):
@@ -131,7 +155,7 @@ def stream_agent(
 
     for _ in range(5):
         collected_chunks = []
-        for chunk in agent.stream(messages):
+        for chunk in _stream_with_retry(agent, messages):
             collected_chunks.append(chunk)
             token = _content_to_text(chunk.content)
             if token:

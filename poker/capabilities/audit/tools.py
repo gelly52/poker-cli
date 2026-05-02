@@ -8,6 +8,11 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
+from poker.capabilities.audit._common import (
+    Risk,
+    SEVERITY_RANK as _SEVERITY_RANK,
+    SEVERITY_STYLES as _SEVERITY_STYLES,
+)
 from poker.state import save_audit
 from poker.workspace import iter_text_files
 
@@ -34,29 +39,11 @@ class ToolInfo:
 
 
 @dataclass
-class Risk:
-    check: str
-    severity: str  # critical | high | medium | low | info
-    evidence: str
-    recommendation: str
-
-
-@dataclass
 class AuditResult:
     tool: ToolInfo
     risks: list[Risk] = field(default_factory=list)
     overall_severity: str = "info"
     llm_summary: str = ""
-
-
-_SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-_SEVERITY_STYLES = {
-    "critical": "bold red",
-    "high": "red",
-    "medium": "yellow",
-    "low": "blue",
-    "info": "dim",
-}
 
 
 # ---------- AST: 识别 @tool ----------

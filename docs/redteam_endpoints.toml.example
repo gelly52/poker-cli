@@ -1,0 +1,32 @@
+# redteam endpoint 白名单示例
+#
+# 把这份文件复制到 ~/.poker/redteam_endpoints.toml，按需修改。
+# 只有列在这里的 endpoint 才能被 /redteam --execute --endpoint <name> 调用。
+#
+# Hard requirements：
+#   - URL 必须 http:// 或 https://
+#   - name 必须字母开头，仅含字母数字下划线
+#   - API key 永远从环境变量读取：POKER_REDTEAM_<NAME 大写>_KEY
+#     （绝不在配置文件里存 secret）
+#   - rate_limit 单位 req/s，默认 1.0；越小越保守
+#
+# 使用示例：
+#   1. cp docs/redteam_endpoints.toml.example ~/.poker/redteam_endpoints.toml
+#   2. export POKER_REDTEAM_LOCAL_MOCK_KEY="sk-test-...."
+#   3. 启动一个本地 echo server（如 llama-server / vllm / openai-compatible mock）
+#   4. /redteam prompts/system.md --execute --endpoint local_mock
+
+[endpoints.local_mock]
+url = "http://localhost:8080/v1/chat/completions"
+model = "test-model"
+rate_limit = 2.0  # 本地服务器可以快一点
+
+[endpoints.deepseek_test]
+url = "https://api.deepseek.com/v1/chat/completions"
+model = "deepseek-chat"
+rate_limit = 0.5  # 0.5 req/s = 每 2 秒一条，避免触发限流
+
+[endpoints.openai_test]
+url = "https://api.openai.com/v1/chat/completions"
+model = "gpt-4o-mini"
+rate_limit = 1.0

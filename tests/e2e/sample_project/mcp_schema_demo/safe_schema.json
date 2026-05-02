@@ -1,0 +1,52 @@
+{
+  "tools": [
+    {
+      "name": "list_users",
+      "description": "List active users filtered by their workspace membership status.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["active", "invited", "suspended"],
+            "maxLength": 16
+          }
+        },
+        "required": ["status"]
+      }
+    },
+    {
+      "name": "fetch_doc",
+      "description": "Retrieve a document by its 8-32 character hex document identifier.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "doc_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{8,32}$",
+            "maxLength": 32
+          }
+        },
+        "required": ["doc_id"]
+      }
+    },
+    {
+      "name": "search_messages",
+      "description": "Search messages in the user-visible channels by an exact match keyword.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "keyword": {
+            "type": "string",
+            "pattern": "^[\\w-]{1,64}$",
+            "maxLength": 64
+          }
+        },
+        "required": ["keyword"]
+      }
+    }
+  ]
+}

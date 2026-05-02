@@ -2,10 +2,11 @@
 
 优先级（高→低）：环境变量 > 项目级配置 > 用户级配置 > 默认值
 """
+
 import os
 from pathlib import Path
 
-from poker.config.models import PokerConfig, ProviderConfig, PROVIDER_ENV_PREFIX, PROVIDERS
+from poker.config.models import PROVIDER_ENV_PREFIX, PROVIDERS, PokerConfig, ProviderConfig
 
 # 配置文件路径常量
 PROJECT_CONFIG_DIR = ".aisec"
@@ -74,7 +75,7 @@ def _merge_provider_config(
     if env_model:
         defaults["model"] = env_model
 
-    # 兼容旧版 .env 格式
+    # 兼容旧版环境变量名
     if not defaults["api_key"]:
         defaults["api_key"] = os.environ.get("API_KEY", "")
     if not defaults["base_url"]:
@@ -119,11 +120,11 @@ def save_project_config(config: PokerConfig, project_root: Path) -> None:
 
     lines = [
         "# Poker CLI 项目配置",
-        f"provider.name = \"{config.provider.name}\"",
-        f"provider.model = \"{config.provider.model}\"",
-        f"provider.base_url = \"{config.provider.base_url}\"",
+        f'provider.name = "{config.provider.name}"',
+        f'provider.model = "{config.provider.model}"',
+        f'provider.base_url = "{config.provider.base_url}"',
     ]
     if config.provider.api_key:
-        lines.append(f"provider.api_key = \"{config.provider.api_key}\"")
-    lines.append(f"profile = \"{config.profile}\"")
+        lines.append(f'provider.api_key = "{config.provider.api_key}"')
+    lines.append(f'profile = "{config.profile}"')
     config_path.write_text("\n".join(lines), encoding="utf-8")

@@ -193,16 +193,51 @@ def _cmd_scan(args_str: str, state: _ReplState) -> None:
 
 
 def _cmd_audit(args_str: str, state: _ReplState, llm) -> None:
-    """REPL /audit <dim>：调能力层 run_audit。"""
+    """REPL /audit <dim> [--schema <path>]：调能力层 run_audit。"""
     from poker.capabilities.audit import run_audit
 
     parts = shlex.split(args_str) if args_str else []
     if not parts:
-        console.print("[yellow]用法：/audit <dimension>，MVP 支持: tools[/yellow]")
+        console.print(
+            "[yellow]用法：/audit <dimension> [--schema <path>]"
+            "  支持: tools / rag / mcp / prompt / mcp_schema[/yellow]"
+        )
         return
-    dimension = parts[0]
+
+    dimension: str | None = None
+    schema_path: Path | None = None
+    i = 0
+    while i < len(parts):
+        a = parts[i]
+        if a == "--schema":
+            i += 1
+            if i >= len(parts):
+                console.print("[red]--schema 缺少 path[/red]")
+                return
+            schema_path = Path(parts[i])
+        elif a.startswith("--schema="):
+            schema_path = Path(a.split("=", 1)[1])
+        elif not a.startswith("--"):
+            if dimension is None:
+                dimension = a
+            else:
+                console.print(f"[yellow]意外参数: {a}[/yellow]")
+                return
+        else:
+            console.print(f"[yellow]未知 flag: {a}[/yellow]")
+            return
+        i += 1
+
+    if dimension is None:
+        console.print("[yellow]用法：/audit <dimension>[/yellow]")
+        return
+
+    # 相对路径相对 state.cwd 解析（REPL 的 tracked cwd 与 os.getcwd 可能不同）
+    if schema_path is not None and not schema_path.is_absolute():
+        schema_path = (state.cwd / schema_path).resolve()
+
     try:
-        run_audit(dimension, state.cwd, llm, console)
+        run_audit(dimension, state.cwd, llm, console, schema_path=schema_path)
     except NotImplementedError as e:
         console.print(f"[yellow]{e}[/yellow]")
     except Exception as e:
@@ -210,16 +245,47 @@ def _cmd_audit(args_str: str, state: _ReplState, llm) -> None:
 
 
 def _cmd_redteam(args_str: str, state: _ReplState) -> None:
-    """REPL /redteam <prompt-file>：生成攻击载荷（不执行）。"""
-    from poker.capabilities.redteam import run_redteam
-
+    """REPL /redteam <prompt-file> [--execute --endpoint <name>]：生成 / 执行攻击载荷。"""
     parts = shlex.split(args_str) if args_str else []
     if not parts:
-        console.print("[yellow]用法：/redteam <prompt-file>[/yellow]")
+        console.print("[yellow]用法：/redteam <prompt-file> [--execute --endpoint <name>][/yellow]")
         return
-    prompt_file = Path(parts[0])
+
+    # 轻量 flag 解析（不引 typer，避免 REPL 进入参数解析模式）
+    prompt_file: Path | None = None
+    execute = False
+    endpoint_name: str | None = None
+    i = 0
+    while i < len(parts):
+        a = parts[i]
+        if a == "--execute":
+            execute = True
+        elif a == "--endpoint":
+            i += 1
+            if i >= len(parts):
+                console.print("[red]--endpoint 缺少 name[/red]")
+                return
+            endpoint_name = parts[i]
+        elif a.startswith("--endpoint="):
+            endpoint_name = a.split("=", 1)[1]
+        elif not a.startswith("--"):
+            prompt_file = Path(a)
+        else:
+            console.print(f"[yellow]未知 flag: {a}[/yellow]")
+            return
+        i += 1
+
+    if prompt_file is None:
+        console.print("[yellow]用法：/redteam <prompt-file> [--execute --endpoint <name>][/yellow]")
+        return
+
     try:
-        run_redteam(prompt_file, state.cwd, console)
+        if execute:
+            from poker.cli.redteam import run_execute
+            run_execute(prompt_file, state.cwd, endpoint_name, console)
+        else:
+            from poker.capabilities.redteam import run_redteam
+            run_redteam(prompt_file, state.cwd, console)
     except Exception as e:
         console.print(f"[red]/redteam 错误: {e}[/red]")
 

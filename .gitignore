@@ -152,3 +152,6 @@ Thumbs.db
 .aisec/config.toml
 
 # 允许提交 example 文件（不忽略 .aisec/config.toml.example）
+
+# 内部 TODO / 计划文档（不公开）
+AI_SECURITY_CLI_TODO.md

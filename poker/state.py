@@ -23,6 +23,8 @@ _FINDINGS_HISTORY = "findings_history.jsonl"
 _AUDITS_DIR = "audits"
 _TRIAGES_FILE = "triages.json"
 _AUDIT_LOG = "audit.jsonl"
+_BACKUPS_DIR = "backups"
+_REDTEAM_DIR = "redteam"
 
 _VALID_TRIAGE_STATES = frozenset({"accepted", "ignored", "fixed"})
 
@@ -207,6 +209,46 @@ def append_audit_log(project_root: Path, event: dict) -> None:
     record = {"ts": _now_iso(), **event}
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+
+
+# ---------- backups ----------
+
+def save_backup(project_root: Path, file_path: Path) -> Path:
+    """备份原文件到 backups/<ISO_ts>_<filename>。
+
+    file_path 不存在时（新建文件场景）写一个 0 字节占位备份并标记。
+    时间戳用 ISO 紧凑格式（YYYYMMDDTHHMMSSZ）以兼容 Windows 文件名。
+    扩展名保留（如 README.md → 备份名含 .md），便于人工辨识。
+    返回备份文件路径。
+    """
+    backups_dir = get_state_dir(project_root) / _BACKUPS_DIR
+    backups_dir.mkdir(exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stem = _safe_filename(file_path.stem) if file_path.stem else "_"
+    suffix = "".join(c for c in file_path.suffix if c.isalnum() or c == ".")
+    backup_path = backups_dir / f"{ts}_{stem}{suffix}"
+    if file_path.exists() and file_path.is_file():
+        backup_path.write_bytes(file_path.read_bytes())
+    else:
+        backup_path.write_bytes(b"")  # 占位：标记原文件不存在
+    return backup_path
+
+
+# ---------- redteam ----------
+
+def save_redteam_run(project_root: Path, prompt_name: str, payload: dict) -> Path:
+    """把 redteam 执行结果保存到 redteam/<prompt>_<ts>.json。"""
+    rt_dir = get_state_dir(project_root) / _REDTEAM_DIR
+    rt_dir.mkdir(exist_ok=True)
+    ts = int(time.time())
+    safe = _safe_filename(prompt_name)
+    path = rt_dir / f"{safe}_{ts}.json"
+    full = {"ts": _now_iso(), "prompt_name": prompt_name, **payload}
+    path.write_text(
+        json.dumps(full, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return path
 
 
 # ---------- 内部工具 ----------
