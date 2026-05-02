@@ -1,9 +1,12 @@
 """Poker CLI 命令入口。"""
 import typer
 
+from poker.cli.audit import register_audit
 from poker.cli.config import register_config
 from poker.cli.init import register_init
+from poker.cli.redteam import register_redteam
 from poker.cli.scan import register_scan
+from poker.cli.trace import register_trace
 
 app = typer.Typer(
     name="poker",
@@ -20,7 +23,10 @@ def main(ctx: typer.Context) -> None:
         start_repl()
 
 
-# 注册一次性命令（poker scan / poker init / poker config）
+# 注册所有一次性命令
 register_scan(app)
+register_audit(app)
+register_redteam(app)
+register_trace(app)
 register_init(app)
 register_config(app)

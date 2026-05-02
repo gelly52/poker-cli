@@ -1,886 +1,366 @@
-# AI 安全 Agent CLI 产品定位与 TODO List
+# Poker CLI MVP 实施 TODO
 
-> 本文档用于指导当前项目从一个通用 LangChain CLI Demo，演进为一个面向 AI 安全领域的 Agent CLI 工具。
+> 本文档基于已确认方案重写。MVP 目标：跑在用户项目里的"安全调查 Agent" CLI——能扫、能聊、能审、能模拟、能追、能自动记忆。
 >
-> 当前的 `ping` / `run` / `version` 只是早期模板命令，未来可以删除或替换，不需要作为核心能力保留。
+> 决策来源：`C:\Users\28581\.claude\plans\3-scan-claude-code-3-scan-fluttering-bachman.md`
+>
+> 后续按本文档逐 Stage 推进，每个 Stage 独立可验收。
 
 ---
 
-## 0. 已确认决策
+## 0. 锁定决策
 
-以下决策在开发前必须确定，后续变更需显式更新本节。
+### 产品定位
 
-### 技术选型
+- **一句话**：跑在用户项目里的"安全调查 Agent" CLI
+- **vs Claude Code**：通才 → 安全专精
+- **vs agent-audit**：批处理扫描 → 多轮交互调查
+- **明确放弃**：Skill 包形态、纯静态规则引擎、Claude Code 替代品
 
-- [x] 采用 `langchain-core` 作为 Agent Runtime 基础，不引入完整 `langchain` 包。
-- [x] 社区集成（OpenAI / Anthropic / DeepSeek / Qwen 等）通过 `langchain-${provider}` 单独按需引入。
-- [x] Python / LangChain / OpenAI-compatible 项目优先识别。
+### 代码原则（贯穿所有 Stage）
 
-### 架构原则
+1. **代码精简**：不写冗余、不写不必要的抽象类、能用 Python 常量 / JSON 数据驱动就不写工厂模式
+2. **结构可扩展但不预设**：目录设计允许将来加 detector / audit 维度 / payload，但 MVP 不预先搭脚手架（YAGNI）
+3. **低耦合 + 职责单一**：每个文件只做一件事；命令入口、数据、算法分开；不把不相关职责堆在一个文件里
+4. **复用优先**：现有 `Finding` / `Detector` / `runtime` / `workspace` / `report` / `engine` 直接用，不重写不包装
 
-- [x] Agent Runtime 与能力模块（Capabilities）硬隔离：Agent 不关心具体能力实现，只负责 LLM 调用循环和工具路由。
-- [x] 每个能力模块独立，有自己的引擎、规则、报告格式。
-- [x] Agent 通过工具接口暴露能力；CLI 通过命令直接调用能力。两条路径互不干扰。
-- [x] workspace 是共享基础设施，不被任何单一能力独占。
-
-### MVP 决策
-
-- [x] MVP 形态：Agent + 单一扫描能力（scan）。Agent 能"看"和"说"，不能"改"。
-- [x] 第一批目标用户：开发 LLM 应用的 Python 开发者。
-- [x] 所有扫描默认只读。
-- [x] MVP 不允许工具自动修改代码。
-- [x] MVP 不允许工具执行 shell 命令。
-- [x] CI 不是一等公民，Phase 3 再做。
-- [x] SARIF 报告 Phase 3 再做。
-- [x] 离线 / 本地模型通过 langchain-core ChatModel 抽象自然支持，但不作为 MVP 验收条件。
-
-### 决策变更记录
-
-| 日期       | 决策项                 | 变更内容                                      |
-| ---------- | ---------------------- | --------------------------------------------- |
-| 2026-04-29 | Agent Runtime 技术选型 | 确定采用 langchain-core，不引入完整 langchain |
-| 2026-04-29 | MVP 形态               | 确定为 Agent + scan 能力，非纯扫描器          |
-| 2026-04-29 | run_command Agent 工具 | 不做永久排除，视未来需求决定                  |
-
----
-
-## 1. 产品定位
-
-### 1.1 一句话定位
-
-这是一个面向开发者和安全工程师的本地 AI 安全 Agent CLI，用于审计、测试和加固 AI 应用、Agent 项目、LLM 工具链与代码仓库。
-
-它不是一个通用 Claude Code 替代品，而是一个更聚焦的安全型 Agent：
-
-- 帮你发现 AI 应用里的安全风险；
-- 帮你理解风险为什么存在；
-- 帮你生成可审查、可回滚的修复方案；
-- 帮你把安全检查沉淀为本地、CI 和团队流程中的自动化能力。
-
-### 1.2 目标用户
-
-#### 核心用户
-
-- 正在开发 LLM 应用、RAG 应用、Agent 系统、MCP Server、AI Copilot 的开发者；
-- 需要审查 AI 项目安全风险的安全工程师；
-- 想在 CI/CD 中加入 AI 安全检查的团队；
-- 需要快速做 AI 应用威胁建模和安全基线检查的创业团队或平台团队。
-
-#### 非核心用户
-
-- 只想聊天的普通用户；
-- 只需要普通代码生成的用户；
-- 只做传统 Web 漏洞扫描、但不关心 AI/LLM 场景的用户。
-
-### 1.3 为什么用户要选择它
-
-用户选择它的理由应该不是"它也是一个 CLI Agent"，而是：
-
-1. 它理解 AI 应用特有风险
-
-   - Prompt injection；
-   - Jailbreak；
-   - RAG 数据污染；
-   - Tool calling 越权；
-   - Agent 文件/命令/网络权限过大；
-   - MCP 工具暴露风险；
-   - LLM 输出数据泄露；
-   - 不安全的系统提示词和安全边界缺失。
-
-2. 它能在本地项目上下文中工作
-
-   - 读取当前仓库；
-   - 理解目录结构；
-   - 搜索代码；
-   - 分析依赖；
-   - 检查配置；
-   - 审查 git diff；
-   - 输出可追踪的证据和修复建议。
-
-3. 它不是只报问题，而是能辅助修复
-
-   - 给出风险等级；
-   - 给出受影响文件和代码位置；
-   - 解释攻击路径；
-   - 生成补丁草案；
-   - 修改前展示 diff；
-   - 用户确认后才应用变更。
-
-4. 它适合接入工程流程
-   - 支持本地交互；
-   - 支持一次性扫描；
-   - 支持 CI 模式；
-   - 支持 JSON / Markdown / SARIF 报告；
-   - 支持安全策略配置；
-   - 支持团队自定义规则。
-
-### 1.4 产品边界
-
-#### 应该做
-
-- AI 应用安全审计；
-- Agent 工具权限审计；
-- Prompt / System Prompt 安全检查；
-- RAG 管线安全检查；
-- MCP Server / tool schema 风险分析；
-- Secret 扫描；
-- 依赖漏洞检查；
-- 代码安全扫描整合；
-- 安全修复建议；
-- 安全报告生成；
-- 本地项目交互式安全助手。
-
-#### 不应该优先做
-
-- 纯聊天助手；
-- 普通代码补全；
-- 大而全的 Claude Code 克隆；
-- 无边界的自动执行命令 Agent；
-- 无确认的自动改代码；
-- 泛化到所有传统安全扫描场景。
-
-### 1.5 推荐产品形态
-
-产品名已确定为 Poker CLI。
-
-建议将 Poker CLI 的产品类型定位为：
-
-"AI Security Code Agent" 或 "LLM App Security Agent"。
-
-它的核心不是替代 Claude Code，而是成为 Claude Code、Cursor、GitHub Copilot 之外的安全补位工具。
-
-典型使用方式：
-
-- 开发者写完一个 Agent 项目后，运行一次安全审查；
-- 安全工程师对团队的 LLM 应用仓库做 AI 安全评估；
-- CI 在 PR 阶段自动检查 prompt、tool、RAG、secret、dependency 风险；
-- 用户让 CLI 解释某个风险并生成可审查修复方案。
-
----
-
-## 2. 核心使用场景
-
-### 2.1 项目级 AI 安全扫描
-
-用户在项目根目录执行扫描，工具自动分析：
-
-- 项目类型；
-- 使用的 LLM 框架；
-- Prompt 文件；
-- Agent 工具定义；
-- MCP Server 定义；
-- RAG 代码路径；
-- API Key 和 Secret 泄露；
-- 依赖漏洞；
-- 高风险文件操作和命令执行能力。
-
-输出内容：
-
-- 风险总览；
-- 风险等级；
-- 证据位置；
-- 攻击路径；
-- 修复建议；
-- 是否可自动修复。
-
-### 2.2 AI Agent 工具权限审计
-
-分析 Agent 项目中暴露给 LLM 的工具，包括：
-
-- 文件读写；
-- shell 命令执行；
-- 网络请求；
-- 数据库访问；
-- 浏览器自动化；
-- MCP tool；
-- 自定义函数工具。
-
-重点检查：
-
-- 工具描述是否过宽；
-- 参数是否缺少校验；
-- 是否允许路径穿越；
-- 是否允许任意命令执行；
-- 是否缺少用户确认；
-- 是否缺少 allowlist / denylist；
-- 是否可能被 prompt injection 诱导滥用。
-
-### 2.3 Prompt Injection 与 Jailbreak 检查
-
-检查项目中的：
-
-- system prompt；
-- developer prompt；
-- tool prompt；
-- RAG instruction；
-- eval case；
-- policy prompt。
-
-识别问题：
-
-- 安全边界模糊；
-- 缺少数据泄露防护；
-- 缺少工具调用约束；
-- 允许外部内容覆盖系统指令；
-- 未区分可信与不可信输入；
-- 对检索内容缺少隔离说明。
-
-### 2.4 RAG 安全审计
-
-检查 RAG 系统中的风险：
-
-- 是否将不可信文档直接拼入 prompt；
-- 是否缺少来源标记；
-- 是否缺少引用校验；
-- 是否可能被文档注入攻击；
-- 是否泄露内部文档；
-- 是否将用户输入直接用于检索或过滤；
-- 是否缺少访问控制。
-
-### 2.5 MCP / Tool Server 安全审计
-
-针对 MCP Server 或类似 tool server，检查：
-
-- 暴露了哪些工具；
-- 工具 schema 是否过于宽泛；
-- 是否暴露敏感路径、环境变量、凭据、内部服务；
-- 是否存在任意文件读写；
-- 是否存在任意命令执行；
-- 是否缺少鉴权和权限边界；
-- 是否缺少审计日志。
-
-### 2.6 安全修复 Agent
-
-对发现的问题，工具可以：
-
-- 解释风险；
-- 给出修复方案；
-- 生成 patch；
-- 展示 diff；
-- 等待用户确认；
-- 应用修改；
-- 运行测试或安全检查验证结果。
-
----
-
-## 3. 建议 CLI 命令设计
-
-### 3.1 初始命令集
-
-以下命令可以替代当前的 `ping` / `run` / `version`：
-
-- `init`
-
-  - 初始化项目配置；
-  - 生成默认安全策略；
-  - 检测项目类型；
-  - 选择模型 provider。
-
-- `scan`
-
-  - 对当前项目进行安全扫描；
-  - 默认只读；
-  - 输出人类可读报告；
-  - 支持 JSON / SARIF / Markdown 输出。
-
-- `review`
-
-  - 审查指定文件、目录或 git diff；
-  - 适合 PR 前本地检查；
-  - 输出风险、证据和建议。
-
-- `chat`
-
-  - 进入交互式安全 Agent 会话；
-  - 可以围绕当前项目问问题；
-  - 支持上下文记忆；
-  - 支持工具调用确认。
-
-- `fix`
-
-  - 针对某个风险生成修复方案；
-  - 默认只生成 diff；
-  - 用户确认后才写入文件。
-
-- `threat-model`
-
-  - 根据项目结构和代码生成威胁模型；
-  - 输出资产、入口、信任边界、攻击路径和缓解建议。
-
-- `prompt-audit`
-
-  - 专门审查 prompt 和 LLM 指令；
-  - 检查 prompt injection / jailbreak / data exfiltration 风险。
-
-- `tools-audit`
-
-  - 专门审查 Agent 工具、MCP 工具、LangChain tools、function calling schema；
-  - 检查权限边界和参数校验。
-
-- `config`
-  - 查看和修改模型、策略、扫描器配置。
-
-### 3.2 命令与阶段规划
-
-| 命令           | Phase 1 (MVP) | Phase 2        | Phase 3 | Phase 4 |
-| -------------- | ------------- | -------------- | ------- | ------- |
-| `init`         | P0            |                |         |         |
-| `scan`         | P0            |                |         |         |
-| `chat`         | P0            |                |         |         |
-| `config`       | P0            |                |         |         |
-| `review`       |               | P1             |         |         |
-| `fix`          |               | P1             |         |         |
-| `prompt-audit` |               | P1（独立命令） |         |         |
-| `tools-audit`  |               | P1（独立命令） |         |         |
-| `threat-model` |               |                |         | P2      |
-
-> MVP 阶段，prompt-audit / tools-audit / mcp-audit 作为 `scan` 内部自动运行的扫描器子集，不提供独立命令。独立命令在 Phase 2 引入。
-
-### 3.3 可以后续删除的模板命令
-
-当前命令不是未来核心能力，可以删除或重命名：
-
-- `ping`
-
-  - 可被 `doctor` 或 `config test` 替代。
-
-- `run`
-
-  - 过于泛化，可被 `chat` / `scan` / `review` / `fix` 替代。
-
-- `version`
-  - 可以保留为常规命令，但不是产品核心。
-
----
-
-## 4. 架构 TODO List
-
-### P0：重新定义项目骨架
-
-- [x] 确定正式产品名和 CLI 命令名：Poker CLI / `poker`。
-- [x] 保留包名 `poker`。
-- [x] 将 `pyproject.toml` 中的 `name`、`description`、`authors` 更新为当前定位。
-- [x] 保留 CLI script 为正式命令名 `poker`。
-- [x] 重写 `README.md`，使其围绕 AI 安全 Agent CLI 展开。
-- [x] 删除 `QUICKSTART.md` 中的模板内容。
-- [ ] 明确当前阶段的 MVP 范围，不做大而全。
-- [ ] 保留 MIT License 或换成更符合项目策略的许可证。
-
-### P0：基础目录重构
-
-演进为以下模块：
+### 输入分流（REPL 三类输入）
 
 ```
-poker/
-├── cli/                       # 命令入口和参数解析
-├── config/                    # 配置加载、profile、环境变量
-├── agent/                     # Agent Runtime（基于 langchain-core）
-│   ├── runtime.py             # Agent 执行循环
-│   ├── llm.py                 # ChatModel provider 抽象
-│   ├── tools.py               # Agent 可调用的工具注册（面向 LLM）
-│   └── prompts.py             # System prompt 模板
-├── capabilities/              # Agent 能力模块（每个能力一个子目录）
-│   └── scan/                  # 安全扫描能力
-│       ├── engine.py          # 扫描编排（scan_path 等）
-│       ├── detectors/         # 扫描器实现
-│       └── report.py          # 扫描报告生成
-├── workspace/                 # 项目文件操作（共享基础设施）
-├── models/                    # 共享数据模型
-└── ui/                        # Rich 输出、流式输出、diff 展示
+poker> 这个项目有什么风险？   # 不带前缀 → chat
+poker> /scan               # / 开头 → poker 内置命令
+poker> !ls -la             # ! 开头 → 执行 shell 命令
+poker> !cd ../another      # cd 也走 ! 通道（poker 内部拦截更新 tracked cwd）
 ```
 
-- [x] 创建 `cli/` 目录，迁移命令入口和参数解析。
-- [x] 创建 `config/` 目录，集中配置管理。
-- [x] 创建 `agent/` 目录，实现 Agent Runtime。
-- [x] 创建 `agent/llm.py`，ChatModel provider 抽象。
-- [x] 创建 `agent/tools.py`，Agent 工具注册机制。
-- [x] 创建 `agent/prompts.py`，System prompt 模板。
-- [x] 创建 `capabilities/` 目录，作为能力模块父目录。
-- [x] 创建 `capabilities/scan/` 目录，迁移现有扫描器。
-- [x] 将现有 `poker/detectors/` 迁移到 `capabilities/scan/detectors/`。
-- [x] 将现有 `poker/scanner.py` 迁移到 `capabilities/scan/engine.py`。
-- [x] 将现有 `poker/reporter.py` 迁移到 `capabilities/scan/report.py`。
-- [x] 保留 `workspace.py` 作为共享基础设施。
-- [x] 创建 `ui/` 目录，Rich 输出和流式渲染。
+- `/<cmd>` → poker 内置命令（scan / audit / redteam / trace / help / quit）
+- `!<cmd>` → 直接 shell 执行（cd 内部拦截维护工作目录）；调用记入 `audit.jsonl`
+- 其他输入 → chat
 
-> **核心原则**：
->
-> - `agent/` 不关心具体能力实现，只负责 LLM 调用循环和工具路由。
-> - `capabilities/` 中每个模块独立，有自己的引擎、规则、报告格式。
-> - Agent 通过工具接口暴露能力；CLI 通过命令直接调用能力。两条路径互不干扰。
-> - `workspace/` 是共享基础设施，不被任何单一能力独占。
-> - 未来新增能力（threat_model、hardening 等）只需在 capabilities/ 下加目录，不改 agent 层。
+### 4 个主动命令（同级，互不重叠）
 
-### P0：配置系统重构
+| 命令 | 类比 | 作用 | MVP 范围 |
+|------|------|------|---------|
+| `/scan [path]` | 点 | 宽而浅扫一遍 | 复用现有 3 个 detector + severity 分组 |
+| `/audit tools` | 线 | 深度审计 agent tools，多步交互 | 仅 tools 维度 |
+| `/redteam <prompt>` | 验证 | 对 prompt 文件生成攻击载荷 | 仅生成不执行 |
+| `/trace <文件:行:变量>` | 流 | 数据流追踪到危险 sink | 函数内（intra-procedural） |
 
-- [x] 避免在 import 阶段强制加载 `API_KEY`。
-- [x] 允许 `help`、`version`、`init` 等命令在没有 API Key 时正常运行。
-- [x] 支持多 provider 配置：OpenAI、Anthropic、DeepSeek、Qwen、本地 OpenAI-compatible endpoint。
-- [x] 支持 profile，例如 `default`、`local`、`ci`。
-- [x] 支持项目级配置文件，例如 `.aisec/config.toml`。
-- [x] 支持用户级配置文件，例如用户主目录下的配置。
-- [x] 支持环境变量覆盖配置文件。
-- [x] 支持 `doctor` 或 `config test` 检查配置是否有效。
-- [x] 对敏感配置做脱敏展示。
+### MVP 范围外
 
-### P0：Agent Runtime 重构
+按"是否后续会做"分两类，避免把延后项当作永久放弃。
 
-- [x] 基于 `langchain-core` 实现 Agent 执行循环。
-- [x] 将 `create_agent()` 拆分为 LLM 初始化、prompt 构建、工具注册、memory/session 管理。
-- [x] 定义安全 Agent 的 system prompt。
-- [x] 加入工具调用策略说明。
-- [x] 加入风险等级输出规范。
-- [x] 加入证据引用规范。
-- [x] 加入"修改前必须展示 diff 并确认"的规则。
-- [x] 加入"危险操作必须请求确认"的规则。
-- [x] 支持流式输出。
-- [x] 支持交互式会话。
-- [ ] 支持 session 持久化（Phase 2）。
-- [ ] 支持中断和恢复（Phase 2）。
+**永久放弃（设计取舍，不会做）**：
+- ❌ 顶级 `/fix` / `/harden` 命令 —— chat 里自然追问处理，无需独立命令
+- ❌ 顶级 `/cd` 命令 —— `!cd` 接管，避免重复
+
+**MVP 不做但后续会做（延后，非放弃）**：
+- ⏳ 写文件 / 改代码 → Phase 2（`write_file` / `apply_patch`，带 diff 确认）
+- ⏳ `/redteam` 实际调用 endpoint → Phase 2（带确认 + sandbox）
+- ⏳ 跨文件 / 跨函数 `/trace` → Phase 2
+- ⏳ 多维度 `/audit`（rag / mcp / prompt）→ Phase 2
+- ⏳ 主动联网 / `web_search` 默认开启 → 视需求决定（当前默认关闭）
+- ⏳ 执行 shell 命令的 Agent 工具 → 视需求决定（用户主动 `!cmd` 不受此限）
 
 ---
 
-## 5. 工具系统 TODO List
+## 1. 实施阶段总览
 
-### 设计说明
+| Stage | 主题 | 主要产出 | 估时 | 依赖 |
+|-------|------|----------|------|------|
+| 1 | REPL 改造 | `/` `!` chat 三类输入分发 | 0.5d | — |
+| 2 | 自动记忆 state.py | `.poker/state/<hash>/` 持久化 | 0.5d | Stage 1 |
+| 3 | /scan 增强 | severity 分组 + quiet/verbose + 落 state | 0.5d | Stage 2 |
+| 4 | 能查（agent tools 扩展） | list_files/read_file/search_text/git_diff | 1d | Stage 2 |
+| 5 | /audit tools | 多步审计向导 | 2d | Stage 4 |
+| 6 | /redteam | payload 生成 | 1d | Stage 2 |
+| 7 | /trace | intra-proc taint | 2d | Stage 2 |
+| 8 | 测试样例 + 错误处理 | 10+ 样例 + 错误兜底 | 1d | All |
 
-Poker CLI 的工具系统分为两类，职责和生命周期完全不同：
-
-| 分类               | 位置                   | 面向        | 说明                                                               |
-| ------------------ | ---------------------- | ----------- | ------------------------------------------------------------------ |
-| **Agent 操作工具** | `agent/tools.py` 注册  | LLM         | Agent 用来探索和操作项目的通用工具（read_file, search_text 等）    |
-| **能力内部工具**   | `capabilities/*/` 内部 | CLI / Agent | 能力模块的内部实现，如扫描器、审计器等。Agent 通过工具接口间接调用 |
-
-> Agent 操作工具是"Agent 的手"；能力内部工具是"Agent 的专业知识"。两者不在同一目录下，也不共享注册机制。
-
-### P0：Agent 操作工具抽象
-
-- [ ] 定义统一的 Agent Tool 接口（基于 langchain-core BaseTool）。
-- [ ] 每个工具必须包含名称、描述、输入 schema、输出 schema。
-- [ ] 每个工具必须标记风险等级：read-only、write、network、shell、destructive。
-- [ ] 每个工具必须声明是否需要用户确认。
-- [ ] 每个工具执行前写审计日志。
-- [ ] 每个工具执行后返回结构化结果。
-- [ ] 工具错误必须结构化返回，而不是只抛异常。
-- [ ] 支持启用/禁用工具。
-- [ ] 支持按 policy 决定工具是否可用。
-
-### P0：基础项目工具（Agent 操作工具）
-
-- [ ] `list_files`：列出项目文件，尊重 `.gitignore`。
-- [ ] `read_file`：读取指定文件，限制项目根目录内访问。
-- [ ] `search_text`：全文搜索。
-- [ ] `search_code`：代码符号或模式搜索。
-- [ ] `git_diff`：读取当前 git diff。
-- [ ] `git_status`：读取 git 状态。
-- [x] `scan_project`：调用 capabilities.scan 引擎，返回扫描结果。（Agent 调用扫描能力的入口）
-
-### P1：写操作工具（Phase 2，fix 命令需要）
-
-- [ ] `write_file`：写文件，默认需要确认。
-- [ ] `apply_patch`：应用 patch，必须展示 diff 并确认。
-- [ ] `run_command`：执行命令，高风险，必须确认，并支持 allowlist。
-
-### P0：安全扫描器（能力内部工具，在 capabilities/scan/detectors/ 内）
-
-- [x] `secret_scan`：扫描 API Key、token、私钥、密码。
-- [x] `prompt_audit`：扫描 prompt injection / jailbreak 风险。
-- [x] `agent_tool_audit`：审查 LangChain @tools / function calling schema。
-- [ ] `dependency_audit`：检查 Python 依赖漏洞。
-- [ ] `mcp_audit`：审查 MCP Server 工具暴露风险。
-- [ ] `rag_audit`：审查 RAG 注入和数据泄露风险。
-- [ ] `unsafe_command_audit`：检查代码中危险命令执行。
-- [ ] `file_permission_audit`：检查危险文件读写。
-
-### P1：第三方工具集成
-
-- [ ] 集成 Bandit，用于 Python 安全扫描。
-- [ ] 集成 pip-audit，用于 Python 依赖漏洞检查。
-- [ ] 集成 Semgrep，用于规则化代码扫描。
-- [ ] 集成 detect-secrets 或 gitleaks，用于 secret 扫描。
-- [ ] 集成 OSV 数据源。
-- [ ] 支持工具不可用时给出安装建议。
-- [ ] 支持 CI 环境下静默执行。
+**总估**：约 8.5d。Stage 5/6/7 互相独立，可并行。
 
 ---
 
-## 6. 安全能力 TODO List
+## 2. 各阶段详细 TODO
 
-### P0：风险模型
+### Stage 1: REPL 改造（0.5d）
 
-- [x] 定义统一 Finding 数据结构。
-- [x] Finding 包含：rule_id、title、severity、category、path、line、evidence、recommendation。
-- [x] severity 包含：critical、high、medium、low、info。
-- [x] category 包含：secret、tool-permission、prompt-injection 等。
-- [ ] Finding 增加 confidence 字段：high、medium、low。
-- [ ] Finding 增加 impact 字段。
-- [ ] 支持去重。
-- [x] 支持风险排序（已实现按 severity 排序）。
-- [ ] 支持风险忽略和 baseline。
+**目标**：`poker` 启动后进入 REPL，能识别 `/` `!` chat 三类输入。
 
-### P0：AI 应用识别
-
-- [ ] 识别 LangChain 项目。
-- [ ] 识别 LlamaIndex 项目。
-- [ ] 识别 OpenAI SDK 使用。
-- [ ] 识别 Anthropic SDK 使用。
-- [ ] 识别 MCP Server 项目。
-- [ ] 识别 Prompt 文件。
-- [ ] 识别 RAG 相关代码。
-- [ ] 识别 Agent 工具定义。
-- [ ] 识别 function calling / tool schema。
-
-### P0：Prompt 安全审计
-
-- [x] 扫描 prompt 文件和代码中的 prompt 字符串。
-- [x] 检查是否区分 trusted / untrusted content。
-- [ ] 检查是否允许用户或文档覆盖 system instruction。
-- [ ] 检查是否缺少数据泄露约束。
-- [ ] 检查是否缺少工具调用边界。
-- [ ] 检查是否缺少引用和来源说明。
-- [ ] 输出具体风险和修复建议。
-
-### P0：Agent Tool 安全审计
-
-- [x] 识别 LangChain `@tool`。
-- [x] 检查 shell 执行风险。
-- [x] 检查文件写操作风险。
-- [x] 检查网络请求风险。
-- [x] 检查高风险工具是否缺少用户确认。
-- [ ] 识别 OpenAI function calling schema。
-- [ ] 识别 MCP tools。
-- [ ] 检查工具描述是否过于宽泛。
-- [ ] 检查参数是否缺少校验。
-- [ ] 检查文件路径参数是否可能路径穿越。
-- [ ] 检查命令参数是否可能任意命令执行。
-- [ ] 检查网络请求是否可能 SSRF。
-- [ ] 检查敏感数据访问是否缺少权限判断。
-
-### P1：RAG 安全审计
-
-- [ ] 识别文档加载器。
-- [ ] 识别向量库。
-- [ ] 识别 retriever。
-- [ ] 识别把检索结果拼入 prompt 的位置。
-- [ ] 检查是否缺少文档来源隔离。
-- [ ] 检查是否缺少 prompt injection 防护。
-- [ ] 检查是否缺少访问控制。
-- [ ] 检查是否可能越权检索。
-- [ ] 给出安全 RAG prompt 模板建议。
-
-### P1：MCP 安全审计
-
-- [ ] 识别 MCP server 配置。
-- [ ] 枚举 MCP tools。
-- [ ] 检查 tool schema。
-- [ ] 检查是否暴露本地文件系统。
-- [ ] 检查是否暴露 shell。
-- [ ] 检查是否暴露环境变量。
-- [ ] 检查是否暴露内部服务。
-- [ ] 检查是否缺少权限边界。
-- [ ] 输出 MCP 安全基线报告。
+- [ ] 修改 `poker/cli/repl.py`：
+  - [ ] 输入解析：`/` 开头进 command 分发；`!` 开头进 shell；其他进 chat
+  - [ ] 启动时记录 cwd 为 tracked project root
+  - [ ] `!cd <path>` 内部拦截，更新 tracked cwd（不实际 spawn shell cd）
+  - [ ] 其他 `!cmd` 用 `subprocess.run` 执行，捕获 stdout/stderr 返显
+  - [ ] `/help` 列内置命令
+  - [ ] `/quit` 退出
+- [ ] 修改 `poker/cli/__init__.py`：注册 audit/redteam/trace 命令占位（实现留 Stage 5/6/7）
+- [ ] **验收**：
+  - [ ] `poker` → 出现 prompt
+  - [ ] `/help` 列出所有命令
+  - [ ] `!ls` 输出当前目录
+  - [ ] `!cd ..` 后 `!pwd` 显示新路径
+  - [ ] 不带前缀的输入进 chat
 
 ---
 
-## 7. CLI 体验 TODO List
+### Stage 2: 自动记忆 state.py（0.5d）
 
-### P0：基础 CLI 体验
+**目标**：所有命令产出自动持久化到 `.poker/state/<project_hash>/`。
 
-- [ ] 使用 Rich 输出清晰的扫描进度。
-- [ ] 对风险按 severity 分组展示。
-- [ ] 每个风险展示文件、行号、证据、原因、建议。
-- [x] 支持 `--format markdown`。
-- [x] 支持 `--format json`（已有 print_json）。
-- [x] 支持 `--format table`（已有 print_table）。
-- [x] 支持 `--output report.md`。
-- [x] 支持 `--fail-on high` 用于 CI。
-- [ ] 支持 `--quiet`。
-- [ ] 支持 `--verbose`。
-
-### P0：交互式 Agent 体验
-
-- [x] 增加 `chat` / REPL 模式。
-- [x] 支持连续对话。
-- [ ] 支持查看当前会话上下文。
-- [ ] 支持引用文件。
-- [x] 支持让 Agent 解释某个 finding。
-- [x] 支持让 Agent 生成修复建议。
-- [x] 支持流式输出。
-- [ ] 支持 Ctrl+C 中断。
-- [ ] 支持会话保存和恢复（Phase 2）。
-
-### P0：安全确认体验
-
-- [ ] 写文件前展示 diff。
-- [ ] 执行命令前展示命令、工作目录、风险等级。
-- [ ] 删除文件前强制二次确认。
-- [ ] 网络访问前展示 URL 和原因。
-- [ ] 支持 `--yes` 但默认不启用。
-- [ ] CI 模式下禁止交互式危险操作。
-- [ ] 所有确认记录写入审计日志。
+- [ ] 新建 `poker/state.py`：
+  - [ ] `project_hash(project_root: Path) -> str`：abspath 的 sha256 前 12 位
+  - [ ] `get_state_dir(project_root: Path) -> Path`：返回 `.poker/state/<hash>/`，确保存在
+  - [ ] `append_chat(project_root, role, content)`：追加 `chat_history.jsonl`
+  - [ ] `load_chat(project_root, limit=50) -> list[dict]`：加载历史聊天
+  - [ ] `save_findings(project_root, findings)`：覆盖写 `last_scan.json` + 追加 `findings_history.jsonl`
+  - [ ] `load_last_findings(project_root) -> list`：读 `last_scan.json`
+  - [ ] `save_audit(project_root, dimension, target, result)`：写 `audits/<dim>_<target>_<ts>.json`
+  - [ ] `set_triage(project_root, finding_id, state)`：更新 `triages.json`（state ∈ {accepted, ignored, fixed}）
+  - [ ] `append_audit_log(project_root, event: dict)`：追加 `audit.jsonl`
+- [ ] 修改 `poker/cli/repl.py`：
+  - [ ] 启动时调 `load_chat` 显示最近 N 条
+  - [ ] 每轮 chat 完成调 `append_chat`（user + assistant 各一条）
+  - [ ] 每个 `/cmd` 或 `!cmd` 执行前调 `append_audit_log`
+- [ ] **验收**：
+  - [ ] 聊几句退出，再启动看到历史
+  - [ ] `.poker/state/<hash>/chat_history.jsonl` 有内容
+  - [ ] `.poker/state/<hash>/audit.jsonl` 有命令日志
 
 ---
 
-## 8. 报告系统 TODO List
+### Stage 3: /scan 增强 + 落 state（0.5d）
 
-### P0：Markdown 报告
+**目标**：scan 输出按 severity 分组，结果自动落盘。
 
-- [x] 生成项目安全总览。
-- [x] 生成风险统计表。
-- [ ] 按 severity 分组。
-- [x] 每个 finding 包含证据和修复建议。
-- [x] 生成可复制到 issue / PR 的说明。
-
-### P0：JSON 报告
-
-- [x] 定义稳定 JSON schema（已有 to_dict）。
-- [x] JSON 报告增加扫描配置、扫描时间、项目元数据。
-- [x] 包含所有 findings。
-- [x] 支持被 CI 或其他工具消费。
-
-### P1：SARIF 报告（Phase 3）
-
-- [ ] 支持 SARIF 输出。
-- [ ] 使结果可接入 GitHub Code Scanning。
-- [ ] 映射 severity 到 SARIF level。
-- [ ] 映射文件和行号。
+- [ ] 修改 `poker/capabilities/scan/report.py`：
+  - [ ] 新增 `print_table_grouped(console, findings)`：按 severity 分组渲染（critical → high → medium → low → info）
+  - [ ] 新增 `print_summary(console, findings)`：`critical N | high N | medium N | low N | info N`
+- [ ] 修改 `poker/cli/scan.py`：
+  - [ ] 加 `--quiet`：只输出 critical / high
+  - [ ] 加 `--verbose`：输出全部含 info
+  - [ ] 默认改用 `print_table_grouped`
+  - [ ] 跑完调 `state.save_findings`
+- [ ] **验收**：
+  - [ ] 在样例项目 `/scan` → 按 severity 分组显示
+  - [ ] `--quiet` 隐藏 medium / low / info
+  - [ ] `--verbose` 显示 info
+  - [ ] `.poker/state/<hash>/last_scan.json` 有数据
 
 ---
 
-## 9. 测试 TODO List
+### Stage 4: 能查（agent tools 扩展，1d）
 
-### P0：单元测试
+**目标**：让 LLM 在 chat 中真正能"看"项目。
 
-- [x] 配置加载测试（待 config 模块完成后补全）。
-- [ ] CLI 参数测试。
-- [x] Tool registry 测试（已有 AgentToolDetector 测试）。
-- [ ] 文件访问边界测试。
-- [x] 风险模型测试（已有 Finding + Severity）。
-- [x] 报告生成测试（已有 print_table / print_json）。
-
-### P0：安全规则测试
-
-- [x] Secret 检测样例。
-- [x] Prompt injection 检测样例。
-- [x] Agent tool 风险检测样例。
-- [ ] RAG 注入检测样例。
-- [ ] MCP tool 风险检测样例。
-- [ ] 任意命令执行检测样例。
-- [ ] 路径穿越检测样例。
-- [ ] 补充至 10+ 安全测试样例（当前约 6 个，需补充）。
-
-### P0：Agent 交互测试
-
-- [ ] Agent 基本对话测试。
-- [ ] Agent 调用 scan_project 工具测试。
-- [ ] Agent 流式输出测试。
-- [ ] Agent Ctrl+C 中断测试。
-
-### P1：集成测试
-
-- [ ] 构造一个示例 LangChain 项目。
-- [ ] 构造一个示例 RAG 项目。
-- [ ] 构造一个示例 MCP Server。
-- [ ] 在这些示例项目上运行 `scan`。
-- [ ] 验证 findings 是否符合预期。
-- [ ] 验证报告格式是否稳定。
+- [ ] 修改 `poker/agent/tools.py`，新增 6 个工具：
+  - [ ] `list_files(path: str = "") -> str`：复用 `workspace.iter_text_files`，限制在 project_root，尊重 `.gitignore`
+  - [ ] `read_file(path: str) -> str`：限制路径在 project_root，最大 200KB，超出截断提示
+  - [ ] `search_text(pattern: str, path: str = "") -> str`：项目内文本搜索（用 `re` 或 ripgrep）
+  - [ ] `search_code(pattern: str, path: str = "") -> str`：代码符号 / 模式搜索（仅 .py / .ts / .js 等）
+  - [ ] `git_diff() -> str`：subprocess 跑 `git diff`
+  - [ ] `git_status() -> str`：subprocess 跑 `git status --short`
+- [ ] 通用要求（每个工具都要做）：
+  - [ ] 输入校验：路径 resolve 后必须以 project_root 开头，越界返回错误字符串
+  - [ ] 错误结构化返回（不抛异常，返回 `"错误：xxx"`）
+  - [ ] 调用前调 `state.append_audit_log`
+- [ ] 修改 `poker/agent/tools.py` 的 `get_agent_tools()` 注册新工具
+- [ ] **验收**：
+  - [ ] chat：「列出项目所有 .py 文件」 → 列出
+  - [ ] chat：「读一下 README.md」 → 显示内容
+  - [ ] chat：「搜索 OpenAI」 → 命中位置
+  - [ ] chat：「最近改了什么」 → git diff 内容
+  - [ ] 越界访问 `read_file("/etc/passwd")` 被拒
 
 ---
 
-## 10. MVP 建议
+### Stage 5: /audit tools（2d）
 
-### 10.1 第一版 MVP 目标
+**目标**：交互式深度审计 agent tools 维度。
 
-第一版不要做成完整 Claude Code 替代品，而是聚焦于：
-
-"一个能对话的 AI 安全 Agent，拥有扫描能力，能在项目目录下发现安全问题并解释结果。"
-
-Agent 在 MVP 阶段能"看"和"说"，不能"改"。
-
-### 10.2 MVP 必须包含
-
-- [x] 新项目名和 CLI 命令名：Poker CLI / `poker`。
-- [x] `scan` 命令（直接调用扫描引擎）。
-- [x] `chat` / REPL 模式（Agent 对话，可调用扫描能力）。
-- [x] `init` 命令（初始化配置）。
-- [x] `config` 命令（查看/修改配置）。
-- [x] LangChain `@tool` 风险审计。
-- [x] Secret 扫描。
-- [x] Prompt 字符串安全审计。
-- [x] Markdown 报告（table 格式）。
-- [x] JSON 报告。
-- [x] 基础配置系统（provider + API key + 项目级配置）。
-- [x] Agent Runtime（基于 langchain-core）。
-- [x] 安全 Agent System Prompt。
-- [ ] 至少 10 个安全测试样例。
-- [ ] Agent 交互基本测试。
-
-### 10.3 MVP 暂不做（延后至后续阶段，非删除）
-
-| 延后项                  | 目标阶段   | 理由                           |
-| ----------------------- | ---------- | ------------------------------ |
-| 自动修复写文件          | Phase 2    | MVP Agent 只读不改             |
-| `review` 命令           | Phase 2    | scan 已覆盖核心，review 是增强 |
-| `fix` 命令              | Phase 2    | 依赖写操作工具                 |
-| `prompt-audit` 独立命令 | Phase 2    | MVP 中作为 scan 子集运行       |
-| `tools-audit` 独立命令  | Phase 2    | 同上                           |
-| `threat-model` 命令     | Phase 4    | 复杂度高，需要 Agent 深度推理  |
-| 任意 shell 执行         | 视需求决定 | 风险极高，需充分设计确认机制   |
-| 复杂 RAG 深度分析       | Phase 3    | 需要代码流分析能力             |
-| 完整 MCP 运行时连接     | Phase 2    | MVP 只做静态 schema 分析       |
-| SARIF 报告              | Phase 3    | 依赖 CI 模式                   |
-| CI 模式                 | Phase 3    | 需要稳定报告格式和退出码规范   |
-| Session 持久化          | Phase 2    | MVP 会话不需要持久化           |
-| 多 Agent 协作           | Phase 4    | 远期目标                       |
-| 插件市场                | 远期       | 需要先有稳定的 API 契约        |
-| 云端平台                | 远期       | 产品形态可能变化               |
-
-### 10.4 MVP 验收标准
-
-- [ ] 在一个示例 LangChain Agent 项目中，能发现高风险工具暴露问题。
-- [ ] 在一个示例 prompt 文件中，能发现 prompt injection 防护缺失。
-- [ ] 在一个示例项目中，能发现硬编码 API key。
-- [ ] `scan` 命令能输出 Markdown 和 JSON 报告。
-- [ ] `chat` 命令能进入交互式 Agent 会话，回答安全问题。
-- [ ] Agent 能在 chat 中调用扫描能力，解释 findings。
-- [ ] 没有 API key 时，`help`、`init`、`version` 类命令仍可运行。
-- [ ] 所有扫描默认只读。
-- [ ] 所有高风险操作默认禁止或需要确认。
+- [ ] 新建 `poker/capabilities/audit/__init__.py`：
+  - [ ] `run_audit(dimension: str, project_root: Path, llm, ui)`：分发到具体维度模块
+  - [ ] MVP 只支持 `dimension == "tools"`，其他维度抛 `NotImplementedError` 友好提示
+- [ ] 新建 `poker/capabilities/audit/tools.py`：
+  - [ ] `find_tools(project_root) -> list[ToolInfo]`：用 AST 找：
+    - LangChain `@tool` 装饰器
+    - LangChain `Tool(...)` 实例化
+    - OpenAI function calling schema 字典
+  - [ ] `audit_tool(tool_info, llm) -> AuditResult`：分项检查
+    - 参数有无校验（regex / Pydantic / 手写 if）
+    - 是否拼到 shell / SQL / prompt
+    - 是否有用户确认（HITL）
+    - 描述模糊度（用 LLM 判断）
+  - [ ] `interactive_audit(project_root, llm, ui)` 主流程：
+    1. 列出 tools 让用户选（编号 / 名称）
+    2. 跑 audit_tool
+    3. 中途允许追问（ui 调 chat）
+    4. 输出结构化评估
+    5. 调 `state.save_audit`
+- [ ] 新建 `poker/cli/audit.py`：
+  - [ ] 命令入口，参数解析（维度），调 `capabilities.audit.run_audit`
+- [ ] 修改 `poker/cli/__init__.py` 替换 audit 占位为真实实现
+- [ ] **验收**：
+  - [ ] 在含多个 `@tool` 的样例项目跑 `/audit tools`
+  - [ ] 列出 tools
+  - [ ] 用户选一个后输出结构化评估
+  - [ ] `.poker/state/<hash>/audits/tools_<name>_<ts>.json` 存在
 
 ---
 
-## 11. 后续演进路线
+### Stage 6: /redteam（1d）
 
-### Phase 1（MVP）：从 Demo 变成安全 Agent CLI
+**目标**：对 prompt 文件生成攻击载荷（不执行）。
 
-- [x] 重命名项目。
-- [x] 重写文档。
-- [x] 增加 `scan`。
-- [ ] 增加基础安全规则。
-- [x] 增加 Markdown / JSON 报告。
-- [x] 增加 `chat` / REPL 模式。
-- [x] 增加 Agent Runtime。
-- [x] 增加配置系统。
-- [ ] 增加测试样例。
-
-### Phase 2：从 Agent CLI 变成交互式安全助手
-
-- [ ] 增加 `review` 命令。
-- [ ] 增加 `fix` 命令。
-- [ ] 增加写操作 Agent 工具（write_file, apply_patch）。
-- [ ] 增加独立 `prompt-audit` / `tools-audit` 命令。
-- [ ] 支持项目上下文。
-- [ ] 支持解释 finding。
-- [ ] 支持生成修复建议。
-- [ ] 支持展示 diff。
-- [ ] 支持用户确认后应用修复。
-- [ ] 支持会话持久化和恢复。
-- [ ] MCP 静态 schema 分析。
-- [ ] RAG 基础审计。
-
-### Phase 3：从本地工具变成团队流程工具
-
-- [ ] 支持 CI 模式。
-- [ ] 支持 SARIF。
-- [ ] 支持 baseline。
-- [ ] 支持团队策略配置。
-- [ ] 支持自定义规则。
-- [ ] 支持审计日志。
-- [ ] RAG 深度分析。
-
-### Phase 4：形成 AI 安全特色能力
-
-- [ ] 深度 Prompt Injection 检测。
-- [ ] MCP 安全审计（运行时连接）。
-- [ ] Agent 权限建模。
-- [ ] `threat-model` 命令。
-- [ ] AI 应用威胁建模。
-- [ ] 自动生成安全测试用例。
-- [ ] 多 Agent 协作。
+- [ ] 新建 `poker/capabilities/redteam/payloads.py`：
+  - [ ] `PAYLOAD_LIBRARY: dict[str, list[Payload]]`，类别：
+    - `jailbreak`（DAN、AIM、developer mode 等）
+    - `role_override`（覆盖 system prompt 的载荷）
+    - `context_smuggling`（在 user 内容里插隐藏指令）
+    - `data_exfil`（诱导泄露 system prompt / 历史）
+    - `instruction_hierarchy`（绕过指令优先级）
+  - [ ] 每类 5+ 条，每条含 `payload` + `intent` + `references`（可空）
+  - [ ] 数据写在 Python 常量或单独 JSON 文件
+- [ ] 新建 `poker/capabilities/redteam/__init__.py`：
+  - [ ] `analyze_prompt(prompt_text) -> dict`：识别角色 / 约束 / 是否提到 tool 调用 / 是否提到敏感数据
+  - [ ] `generate_payloads(prompt_text) -> list[PayloadResult]`：根据分析结果选相关 payload，输出含意图说明
+- [ ] 新建 `poker/cli/redteam.py`：
+  - [ ] 参数：prompt 文件路径
+  - [ ] 校验路径在 project_root 内
+  - [ ] 读文件 → 调 generate_payloads → 渲染表格
+  - [ ] **不实际执行 endpoint**
+- [ ] 修改 `poker/cli/__init__.py` 注册 /redteam
+- [ ] **验收**：
+  - [ ] 对样例 system prompt 跑 `/redteam prompts/system.md`
+  - [ ] 输出 ≥5 条针对性 payload + 意图说明
+  - [ ] 不联网、不调 endpoint
 
 ---
 
-## 12. 当前代码处理建议
+### Stage 7: /trace（2d）
 
-### 可以保留
+**目标**：函数内数据流追踪。
 
-- [ ] Typer 作为 CLI 框架。
-- [ ] Rich 作为终端 UI。
-- [ ] OpenAI-compatible API 配置思路。
-- [ ] Python 项目结构。
-- [ ] Poetry 管理方式。
-
-### 应该重写
-
-- [ ] `README.md`。
-- [ ] `QUICKSTART.md`。
-- [x] `poker/cli.py` 中的命令设计。
-- [x] 删除 `poker/agent.py` 中的通用助手 prompt。
-- [x] 删除 `poker/tools/echo.py` 示例工具。
-- [x] 删除 `poker/config.py` 的强制加载方式。
-
-### 可以删除
-
-- [x] `echo` 工具。
-- [x] 泛化的 `run` 命令。
-- [ ] 模板式 Roadmap。
-- [ ] "通用 AI Agent Framework" 的定位描述。
-
-### 迁移计划（对应第 4 节目录重构）
-
-| 当前位置             | 迁移目标                                  | 说明         |
-| -------------------- | ----------------------------------------- | ------------ |
-| `poker/cli.py`       | `poker/cli/scan.py` + `poker/cli/chat.py` | 按命令拆分   |
-| `poker/scanner.py`   | `poker/capabilities/scan/engine.py`       | 扫描编排     |
-| `poker/detectors/`   | `poker/capabilities/scan/detectors/`      | 扫描器实现   |
-| `poker/reporter.py`  | `poker/capabilities/scan/report.py`       | 报告生成     |
-| `poker/models.py`    | `poker/models/finding.py`                 | 数据模型     |
-| `poker/workspace.py` | `poker/workspace/`                        | 共享文件操作 |
+- [ ] 新建 `poker/capabilities/trace/sinks.py`：
+  - [ ] `DANGEROUS_SINKS: list[SinkPattern]`，包括：
+    - `subprocess.run` / `Popen` / `call`（shell=True 或参数到 cmd）
+    - `eval` / `exec` / `compile`
+    - `os.system` / `os.popen`
+    - `cursor.execute` / `cursor.executemany`（拼接的 SQL）
+    - prompt 拼接（`agent.invoke` / `llm.invoke` 的字符串拼接参数）
+    - `open()` 的写入模式
+  - [ ] 每个 sink 含：模式描述 + 触发条件 + 风险说明
+- [ ] 新建 `poker/capabilities/trace/__init__.py`：
+  - [ ] `trace_var(file_path: Path, line: int, var_name: str) -> TraceResult`：
+    - 用 `ast` 解析文件
+    - 找到 line 所在 function 节点
+    - 在 function AST 内做 def-use 追踪：变量赋值 / 拼接 / 传参
+    - 检查每跳是否触达 `DANGEROUS_SINKS`
+    - 返回 hop 列表 + 最终判断（safe / warn / danger）
+- [ ] 新建 `poker/cli/trace.py`：
+  - [ ] 参数解析：`<文件:行:变量>`
+  - [ ] 调 `trace_var` → 渲染数据流路径（每 hop 一行 + 最终标记）
+- [ ] 修改 `poker/cli/__init__.py` 注册 /trace
+- [ ] **验收**：
+  - [ ] 对含 `user_input → command → subprocess.run(shell=True)` 的样例代码跑
+  - [ ] 输出完整数据流路径
+  - [ ] 危险 sink 标 ⚠️ 并给修复建议
 
 ---
 
-## 13. 关键决策
+### Stage 8: 测试样例 + 错误处理（1d）
 
-### 已决定
+**目标**：测试覆盖、错误兜底。
 
-- [x] 产品名：Poker CLI。
-- [x] MVP 形态：Agent + 单一扫描能力。Agent 能"看"和"说"，不能"改"。
-- [x] Agent Runtime 基于 langchain-core，不引入完整 langchain。
-- [x] 第一批目标用户：开发 LLM 应用的 Python 开发者。
-- [x] Python / LangChain / OpenAI-compatible 项目优先。
-- [x] 所有扫描默认只读。
-- [x] 自动修复 MVP 只生成 diff，不直接写入。
-- [x] CI 输出支持 JSON 和 Markdown，SARIF 放到 Phase 3。
-- [x] AI 安全能力作为差异化核心，不追求完整替代 Claude Code。
-- [x] Agent Runtime 与能力模块硬隔离。
-- [x] MCP 安全审计 Phase 2 再做。
-- [x] 离线 / 本地模型通过 ChatModel 抽象支持，但不作为 MVP 验收条件。
-
-### 待后续决定
-
-- [ ] 是否允许工具自动修改代码？→ Phase 2 `fix` 命令时决定。
-- [ ] 是否允许工具执行 shell 命令？→ 视未来需求决定，不做永久排除。
-- [ ] CI 是否一等公民？→ Phase 3 决定。
-- [ ] 报告格式是否需要 SARIF？→ Phase 3 决定。
-- [ ] `run_command` Agent 工具是否最终引入？→ 需充分设计确认机制后再决定。
+- [ ] 补样例项目到 `tests/e2e/sample_project/`：
+  - [ ] `langchain_agent/` —— 含 `@tool` 的小项目（覆盖 audit + scan）
+  - [ ] `secrets_demo/` —— 含硬编码 OpenAI key / AWS key 的项目（覆盖 secret detector）
+  - [ ] `bad_prompt/` —— 含不安全 system prompt 的项目（覆盖 prompt detector + redteam）
+  - [ ] `unsafe_tool/` —— `user_input → subprocess(shell=True)` 的项目（覆盖 trace）
+- [ ] 补单元测试：
+  - [ ] `tests/test_state.py` —— state 各函数（路径、读写、triage）
+  - [ ] `tests/test_audit_tools.py` —— `find_tools` 能识别 @tool / Tool() / function schema
+  - [ ] `tests/test_redteam.py` —— `analyze_prompt` + `generate_payloads`
+  - [ ] `tests/test_trace.py` —— sink 命中 / 未命中 / 多 hop
+  - [ ] `tests/test_repl.py` —— `/` `!` chat 分发
+- [ ] 错误处理：
+  - [ ] LLM 调用：超时重试（指数退避，max 3 次）、token 超限提示截断
+  - [ ] detector 异常：单个失败不影响其他，错误记入 `audit.jsonl`
+  - [ ] 文件编码 / AST 解析失败：跳过并记录跳过原因
+  - [ ] 配置缺失：友好提示，不抛栈
+  - [ ] 路径越界：拒绝 + 记录
+- [ ] **验收**：
+  - [ ] `pytest tests/` 全绿
+  - [ ] 模拟 LLM 超时能正确重试
+  - [ ] 越界尝试被拒并记录
+  - [ ] 安全测试样例总数 ≥10
 
 ---
 
-## 14. 错误处理与可观测性
+## 3. MVP 验收标准
 
-### P0：错误处理策略
+跑完上面 8 个 Stage 后，应满足：
 
-- [ ] LLM 调用失败处理：超时重试（指数退避）、限流降级、token 超限截断提示。
-- [ ] 扫描器异常容错：文件编码错误跳过并记录、AST 解析失败跳过并记录、单个扫描器异常不影响其他扫描器。
-- [ ] Agent 调用工具失败：结构化错误返回 + 用户提示，不静默跳过。
-- [ ] 配置缺失处理：缺 API key 时给出明确指引，不抛模糊异常。
-- [ ] 全局异常兜底：未预期异常输出友好提示 + 调试信息获取方式。
+- [ ] 在含硬编码 OpenAI key + 不安全 `@tool` 的样例项目上 `/scan` 输出 ≥3 个 findings 分级显示
+- [ ] `/audit tools` 能列出 tools，用户选后输出结构化评估
+- [ ] `/redteam <prompt>` 输出 ≥5 条针对性 payload + 意图
+- [ ] `/trace agent.py:21:user_input` 输出完整数据流路径 + 危险标记
+- [ ] 跑完 scan 退出再进入，chat 中能引用历史 findings
+- [ ] `!ls` 能输出，`audit.jsonl` 留记录
+- [ ] `!cd ../another` 后 `/scan` 不读切换前的目录
+- [ ] 没 API key 时 `--help` / `/help` / `/quit` 仍可用
+- [ ] `pytest tests/` 全绿，覆盖率 >70%
+- [ ] 安全测试样例 ≥10 个
 
-### P0：可观测性
+---
 
-- [ ] 日志级别：ERROR / WARNING / INFO / DEBUG，默认 WARNING。
-- [ ] `--verbose` 输出 INFO 级别日志。
-- [ ] `--debug` 输出 DEBUG 级别日志（含 LLM 请求/响应摘要）。
-- [ ] 审计日志：所有 Agent 工具调用记录到本地审计文件。
-- [ ] 扫描跳过记录：被跳过的文件和原因写入报告附录。
-- [ ] Agent 执行 trace：记录 Agent 的每一步决策和工具调用链路（Phase 2）。
+## 4. Phase 2+ 路线（不在 MVP）
+
+### Phase 2 —— 从 Agent CLI 变成交互式安全助手
+- [ ] 跨文件 `/trace`
+- [ ] `/audit` 加 rag / mcp / prompt 维度
+- [ ] `/redteam` 实际执行 endpoint（带确认 + sandbox）
+- [ ] 写文件能力（`write_file` / `apply_patch`）
+- [ ] 会话持久化更完善（多会话切换）
+- [ ] MCP 静态 schema 分析
+
+### Phase 3 —— 从本地工具变成团队流程工具
+- [ ] CI 模式（`poker scan --ci`）
+- [ ] SARIF 输出
+- [ ] baseline 管理（`poker scan --baseline`）
+- [ ] 团队策略配置文件
+- [ ] 自定义规则
+- [ ] 审计日志强化
+
+### Phase 4 —— AI 安全特色能力
+- [ ] runtime 观测（LangChain callback / OpenTelemetry 钩子）
+- [ ] `/threat-model` 命令
+- [ ] 国产生态深度支持（Dify / Coze / FastGPT / Langchain-Chatchat / Qwen-Agent）
+- [ ] Agent 权限建模
+- [ ] 多 Agent 协作
+
+---
+
+## 5. 已完成（保留 / 复用，不动）
+
+- [x] 项目骨架：`poker/cli/` / `agent/` / `capabilities/scan/` / `models/` / `config/` / `ui/`
+- [x] Agent runtime（`langchain-core`，流式 + history）
+- [x] 3 个 detector：`secret` / `prompt` / `agent_tools`
+- [x] Scan engine + reporter（table / json / markdown）
+- [x] 配置系统（多 provider + profile + 项目级 / 用户级 / 环境变量覆盖）
+- [x] CLI 基础命令：`scan` / `init` / `config` / `chat`
+- [x] 样例配置 `.aisec/config.toml.example`
+- [x] Finding 数据模型（severity / category / path / line / evidence / recommendation）
+- [x] Workspace 文件遍历
+
+---
+
+## 6. 决策变更记录
+
+| 日期 | 决策项 | 变更内容 |
+|------|--------|---------|
+| 2026-04-29 | Agent Runtime 技术选型 | 确定 langchain-core，不引入完整 langchain |
+| 2026-04-29 | MVP 形态 | Agent + scan，非纯扫描器 |
+| 2026-05-01 | TODO 全文重写 | 锁定 4 个主动命令 + REPL 三类输入；按 Stage 拆解 |
+| 2026-05-01 | `/cd` 删除 | 改用 `!cd` 内部拦截 |
+| 2026-05-01 | 能力分层 | 命令入口 / 能力实现 / 基础设施三层，audit/redteam/trace 都进 `capabilities/` |

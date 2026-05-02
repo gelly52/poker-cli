@@ -10,6 +10,7 @@ packages = [{include = "poker"}]
 python = "^3.10"
 typer = {extras = ["all"], version = "^0.16.0"}
 rich = "^13.0.0"
+prompt-toolkit = "^3.0"
 langchain-core = "^0.3"
 langchain-openai = "^0.3"
 

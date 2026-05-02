@@ -34,6 +34,25 @@ def get_session_history(session_id: str) -> InMemoryChatMessageHistory:
     return _HISTORY_STORE[session_id]
 
 
+def restore_session(session_id: str, records: list[dict]) -> None:
+    """把持久化的 chat records 加载到内存 session（覆盖现有内容）。
+
+    records 是 state.load_chat / load_chat_sessions 返回的 dict 形态，
+    每条含 role / content。System 消息忽略（runtime 自己管 system prompt）。
+    """
+    history = get_session_history(session_id)
+    history.clear()
+    msgs: list[BaseMessage] = []
+    for r in records:
+        role = r.get("role")
+        content = r.get("content", "")
+        if role == "user":
+            msgs.append(HumanMessage(content=content))
+        elif role == "assistant":
+            msgs.append(AIMessage(content=content))
+    history.add_messages(msgs)
+
+
 def create_agent(llm: BaseChatModel, tools: list | None = None):
     """创建一个绑定了工具的 Agent。"""
     agent_tools = tools or get_agent_tools()

@@ -31,7 +31,10 @@ SEVERITY_RANK = {
 
 
 def scan_path(root: Path, detectors: tuple[Detector, ...] = DEFAULT_DETECTORS) -> list[Finding]:
-    """对文件或目录执行全部扫描器。"""
+    """对文件或目录执行全部扫描器。
+
+    单个 detector / 文件失败时跳过并继续，不影响其他 detector。
+    """
 
     root = root.resolve()
     findings: list[Finding] = []
@@ -39,9 +42,16 @@ def scan_path(root: Path, detectors: tuple[Detector, ...] = DEFAULT_DETECTORS) -
 
     for path in paths:
         relative_path = path.name if root.is_file() else path.relative_to(root).as_posix()
-        content = read_text(path)
+        try:
+            content = read_text(path)
+        except Exception:
+            continue
         for detector in detectors:
-            findings.extend(detector.scan(path, relative_path, content))
+            try:
+                findings.extend(detector.scan(path, relative_path, content))
+            except Exception:
+                # 单个 detector 失败不影响其他
+                continue
 
     return sorted(
         findings,

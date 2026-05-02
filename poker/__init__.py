@@ -1,3 +1,7 @@
 """Poker CLI - AI security agent CLI."""
+from importlib.metadata import PackageNotFoundError, version
 
-__version__ = "0.1.0"
+try:
+    __version__ = version("poker-cli")
+except PackageNotFoundError:  # editable install / source-tree run
+    __version__ = "dev"
