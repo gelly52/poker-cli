@@ -348,11 +348,28 @@ def stream_agent_long(
                     [*work_messages, HumanMessage(content=REFLECTION_PROMPT)]
                 )
                 reflection_text = _content_to_text(reflection_response.content)
-            except Exception:
-                # 反思 LLM 调用失败：结束循环，不抛栈
+            except Exception as exc:
+                # 反思 LLM 调用失败：UI 提示后结束循环，不抛栈
+                yield (
+                    f"\n  ─── reflection skipped (llm error: {exc}) ───\n\n",
+                    history.messages,
+                    current_round,
+                )
                 break
 
             status = _parse_reflection(reflection_text)
+            status_label = status or "unrecognized"
+            # 把反思整段透给 UI（含 status / reason / next_step），让用户能看到模型的判断过程
+            yield (
+                (
+                    f"\n  ─── reflection ({status_label}) ───\n"
+                    f"{reflection_text.strip()}\n"
+                    f"  ─── end reflection ───\n\n"
+                ),
+                history.messages,
+                current_round,
+            )
+
             if status is None or status in ("done", "failed"):
                 # 无合法 reflection 或明确结束：退出
                 break

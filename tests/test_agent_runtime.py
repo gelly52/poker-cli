@@ -216,6 +216,45 @@ def test_stream_agent_long_reflection_llm_exception(monkeypatch) -> None:
     assert events  # 至少 yield 过 token
 
 
+def test_stream_agent_long_yields_reflection_text_to_ui(monkeypatch) -> None:
+    """reflection 文本 + status 标签必须被 yield 给 UI（修补"反思过程不可见"）。"""
+    runtime._HISTORY_STORE.clear()
+    monkeypatch.setattr(runtime, "get_agent_tools", lambda: [])
+    monkeypatch.setattr(
+        runtime, "create_agent", lambda llm, tools=None: _ScriptedStreamAgent(["body"])
+    )
+
+    fake_llm = _ScriptedLLM(
+        [
+            "<reflection>\nstatus: done\nreason: 已经够了\n</reflection>",
+        ]
+    )
+    events = list(runtime.stream_agent_long(fake_llm, "q", session_id="long-refl-yield"))
+    full = "".join(tok for tok, _, _ in events)
+
+    assert "─── reflection (done) ───" in full
+    assert "已经够了" in full          # reason 字段进入 UI
+    assert "─── end reflection ───" in full
+
+
+def test_stream_agent_long_yields_reflection_skipped_on_llm_error(monkeypatch) -> None:
+    """LLM 抛错时，UI 也能看到 'reflection skipped' 行而不是静默退出。"""
+    runtime._HISTORY_STORE.clear()
+    monkeypatch.setattr(runtime, "get_agent_tools", lambda: [])
+    monkeypatch.setattr(
+        runtime, "create_agent", lambda llm, tools=None: _ScriptedStreamAgent(["body"])
+    )
+
+    class _BoomLLM:
+        def invoke(self, _msgs):
+            raise RuntimeError("network down")
+
+    events = list(runtime.stream_agent_long(_BoomLLM(), "q", session_id="long-refl-err"))
+    full = "".join(tok for tok, _, _ in events)
+    assert "reflection skipped" in full
+    assert "network down" in full
+
+
 def test_stream_agent_long_keyboard_interrupt_persists(monkeypatch) -> None:
     """yield 时模拟 KeyboardInterrupt：finally 仍把已完成轮的内容落盘。"""
     runtime._HISTORY_STORE.clear()
