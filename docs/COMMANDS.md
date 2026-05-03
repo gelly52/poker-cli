@@ -415,5 +415,4 @@ repl_history             ↑/↓ 浏览的输入历史
 ## See also
 
 - `README.md` — 项目总览 + Quick Start + `poker_observer` 集成示例
-- `AI_SECURITY_CLI_TODO.md` — 路线图 + 决策变更记录
 - `docs/redteam_endpoints.toml.example` — `/redteam --execute` 端点白名单示例

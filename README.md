@@ -17,6 +17,8 @@
 
 [Why Poker CLI](#-why-poker-cli) · [Quick Start](#-quick-start) · [Commands](#-commands) · [Behind the scenes](#-behind-the-four-commands)
 
+🌐 中文 · [docs/README.zh.md](docs/README.zh.md)  ·  📖 Full command reference · [docs/COMMANDS.md](docs/COMMANDS.md)
+
 </div>
 
 ---
@@ -127,6 +129,8 @@ You drop into the REPL. Three input prefixes plus a fall-through:
 ---
 
 ## 🃏 Commands
+
+> Full flag / argument / disk-layout reference lives in [`docs/COMMANDS.md`](docs/COMMANDS.md); this section just shows what the four main suits produce.
 
 ### ♣ &nbsp; `/scan` &nbsp;·&nbsp; *the wide pass*
 
