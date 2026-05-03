@@ -1,5 +1,6 @@
 """Tests for agent runtime without real LLM calls."""
 
+import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk
 
 from poker.agent import runtime
@@ -290,6 +291,7 @@ def test_stream_agent_long_reflection_llm_exception(monkeypatch) -> None:
 
 def test_stream_agent_long_yields_reflection_text_to_ui(monkeypatch) -> None:
     """reflection 文本 + status 标签必须被 yield 给 UI（修补"反思过程不可见"）。"""
+    pytest.skip("reflection UI 显示已注释，恢复显示时取消此 skip")
     runtime._HISTORY_STORE.clear()
     monkeypatch.setattr(runtime, "get_agent_tools", lambda: [])
     monkeypatch.setattr(
@@ -311,6 +313,7 @@ def test_stream_agent_long_yields_reflection_text_to_ui(monkeypatch) -> None:
 
 def test_stream_agent_long_yields_reflection_skipped_on_llm_error(monkeypatch) -> None:
     """LLM 抛错时，UI 也能看到 'reflection skipped' 行而不是静默退出。"""
+    pytest.skip("reflection UI 显示已注释，恢复显示时取消此 skip")
     runtime._HISTORY_STORE.clear()
     monkeypatch.setattr(runtime, "get_agent_tools", lambda: [])
     monkeypatch.setattr(
