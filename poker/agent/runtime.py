@@ -199,11 +199,18 @@ def stream_agent(
 
     for _ in range(_TOOL_LOOP_LIMIT):
         collected_chunks = []
+        leading_newlines_pending = True  # 吃掉模型在工具调用之后自带的 leading \n，避免空行叠加
         for chunk in _stream_with_retry(agent, messages):
             collected_chunks.append(chunk)
             token = _content_to_text(chunk.content)
-            if token:
-                yield (token, history.messages)
+            if not token:
+                continue
+            if leading_newlines_pending:
+                token = token.lstrip("\n")
+                if not token:
+                    continue
+                leading_newlines_pending = False
+            yield (token, history.messages)
 
         response = collected_chunks[0] if collected_chunks else AIMessage(content="")
         for c in collected_chunks[1:]:
@@ -309,11 +316,18 @@ def stream_agent_long(
             round_text_parts: list[str] = []
             for _ in range(_TOOL_LOOP_LIMIT):
                 collected_chunks = []
+                leading_newlines_pending = True  # 吃模型工具调用后的 leading \n，避免与上面 yield 的 \n\n 叠成多空行
                 for chunk in _stream_with_retry(agent, work_messages):
                     collected_chunks.append(chunk)
                     token = _content_to_text(chunk.content)
-                    if token:
-                        yield (token, history.messages, current_round)
+                    if not token:
+                        continue
+                    if leading_newlines_pending:
+                        token = token.lstrip("\n")
+                        if not token:
+                            continue
+                        leading_newlines_pending = False
+                    yield (token, history.messages, current_round)
 
                 response = collected_chunks[0] if collected_chunks else AIMessage(content="")
                 for c in collected_chunks[1:]:
@@ -363,26 +377,28 @@ def stream_agent_long(
                 )
                 reflection_text = _content_to_text(reflection_response.content)
             except Exception as exc:
-                # 反思 LLM 调用失败：UI 提示后结束循环，不抛栈
-                yield (
-                    f"\n  ─── reflection skipped (llm error: {exc}) ───\n\n",
-                    history.messages,
-                    current_round,
-                )
+                # 反思 LLM 调用失败：结束循环，不抛栈
+                # ── 取消下面注释可让 UI 显示 "reflection skipped (llm error: ...)" ──
+                # yield (
+                #     f"\n  ─── reflection skipped (llm error: {exc}) ───\n\n",
+                #     history.messages,
+                #     current_round,
+                # )
+                _ = exc  # 仅供恢复显示时引用，避免 lint 报 unused
                 break
 
             status = _parse_reflection(reflection_text)
-            status_label = status or "unrecognized"
-            # 把反思整段透给 UI（含 status / reason / next_step），让用户能看到模型的判断过程
-            yield (
-                (
-                    f"\n  ─── reflection ({status_label}) ───\n"
-                    f"{reflection_text.strip()}\n"
-                    f"  ─── end reflection ───\n\n"
-                ),
-                history.messages,
-                current_round,
-            )
+            # ── 取消下面注释可让 UI 显示完整反思块（status / reason / next_step）──
+            # status_label = status or "unrecognized"
+            # yield (
+            #     (
+            #         f"\n  ─── reflection ({status_label}) ───\n"
+            #         f"{reflection_text.strip()}\n"
+            #         f"  ─── end reflection ───\n\n"
+            #     ),
+            #     history.messages,
+            #     current_round,
+            # )
 
             if status is None or status in ("done", "failed"):
                 # 无合法 reflection 或明确结束：退出
