@@ -6,6 +6,7 @@
 每个 detect_* 返回 list[dict]：
   {"rule_id": ..., "severity": "critical|high|medium|low|info", "evidence": "..."}
 """
+
 import re
 from typing import Any
 

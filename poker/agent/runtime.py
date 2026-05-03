@@ -193,6 +193,10 @@ def stream_agent(
     tool_map = {t.name: t for t in tools}
     agent = create_agent(llm, tools)
 
+    # 累积工具循环每次 LLM 输出的 content（含调工具前的 narrate + 最终回答），
+    # 确保 history 反映完整推理过程，而不是只剩"最终总结"
+    text_parts: list[str] = []
+
     for _ in range(_TOOL_LOOP_LIMIT):
         collected_chunks = []
         for chunk in _stream_with_retry(agent, messages):
@@ -206,9 +210,13 @@ def stream_agent(
             response = response + c
         messages.append(response)
 
+        response_text = _content_to_text(response.content)
+        if response_text:
+            text_parts.append(response_text)
+
         tool_calls = getattr(response, "tool_calls", None)
         if not tool_calls:
-            ai_message = AIMessage(content=_content_to_text(response.content))
+            ai_message = AIMessage(content="\n\n".join(text_parts))
             history.add_messages([human_message, ai_message])
             yield ("", history.messages)
             return
@@ -295,7 +303,10 @@ def stream_agent_long(
     try:
         while current_round <= max_rounds:
             # ---- plan-execute（最多 _TOOL_LOOP_LIMIT 次工具循环）----
-            round_response_text = ""
+            # 累积本轮所有 LLM 输出 content（含调工具前的 narrate + 最终回答）。
+            # 仅记录最后那次 AIMessage 会让 history 丢失意图说明，下一轮模型看不到
+            # 自己的 narrate 风格 → 可能不再 narrate。
+            round_text_parts: list[str] = []
             for _ in range(_TOOL_LOOP_LIMIT):
                 collected_chunks = []
                 for chunk in _stream_with_retry(agent, work_messages):
@@ -309,9 +320,12 @@ def stream_agent_long(
                     response = response + c
                 work_messages.append(response)
 
+                response_text = _content_to_text(response.content)
+                if response_text:
+                    round_text_parts.append(response_text)
+
                 tool_calls = getattr(response, "tool_calls", None)
                 if not tool_calls:
-                    round_response_text = _content_to_text(response.content)
                     break
 
                 for tc in tool_calls:
@@ -330,8 +344,8 @@ def stream_agent_long(
                         current_round,
                     )
 
-            if round_response_text:
-                round_responses.append(round_response_text)
+            if round_text_parts:
+                round_responses.append("\n\n".join(round_text_parts))
 
             # ---- 上限检查 ----
             if current_round >= max_rounds:

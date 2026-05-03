@@ -135,6 +135,78 @@ def test_stream_agent_long_single_round_done(monkeypatch) -> None:
     assert "hello" in history[-1].content
 
 
+def test_stream_agent_long_history_keeps_narrate_before_tool_calls(
+    monkeypatch,
+) -> None:
+    """工具调用前的 narrate 文本必须进入 history，不能只剩最终回答。
+
+    回归测试：旧实现 round_response_text 只在"无 tool_call 那次"被赋值，
+    导致工具循环中间的意图说明丢失，下一轮模型看不到自己的 narrate 风格。
+    """
+    runtime._HISTORY_STORE.clear()
+    monkeypatch.setattr(runtime, "get_agent_tools", lambda: [])
+
+    class _FakeTool:
+        name = "fake_tool"
+
+        def invoke(self, args):
+            return "tool result"
+
+    fake_tool = _FakeTool()
+
+    # 模拟两次 LLM 调用：第一次 narrate + tool_call；第二次最终回答
+    class _ScriptedAgent:
+        def __init__(self):
+            self.calls = 0
+
+        def stream(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                # narrate 一句话 + 触发 tool_call
+                yield AIMessageChunk(content="我先调一次工具看看")
+                tc = {
+                    "name": "fake_tool",
+                    "args": {},
+                    "id": "tc1",
+                    "type": "tool_call",
+                }
+                yield AIMessageChunk(content="", tool_calls=[tc])
+            else:
+                yield AIMessageChunk(content="最终结论")
+
+    monkeypatch.setattr(
+        runtime, "create_agent", lambda llm, tools=None: _ScriptedAgent()
+    )
+
+    # 模拟 tool_map：直接 patch agent_tools
+    fake_llm_invoke = lambda msgs: AIMessage(  # noqa: E731
+        content="<reflection>status: done</reflection>"
+    )
+
+    class _LLM:
+        def invoke(self, msgs):
+            return fake_llm_invoke(msgs)
+
+    # 替换 get_agent_tools 让 fake_tool 可被路由到
+    monkeypatch.setattr(runtime, "get_agent_tools", lambda: [fake_tool])
+
+    list(
+        runtime.stream_agent_long(
+            _LLM(),
+            "你好",
+            session_id="long-narrate",
+            tools=[fake_tool],
+        )
+    )
+
+    history = runtime.get_session_history("long-narrate").messages
+    assert [m.type for m in history] == ["human", "ai"]
+    final = history[-1].content
+    # narrate + 最终回答都要在
+    assert "我先调一次工具看看" in final, f"narrate 丢失: {final!r}"
+    assert "最终结论" in final, f"最终回答丢失: {final!r}"
+
+
 def test_stream_agent_long_continues_then_done(monkeypatch) -> None:
     """第 1 轮 continue → 第 2 轮 done：UI 会看到 round 切到 2。"""
     runtime._HISTORY_STORE.clear()
