@@ -140,6 +140,7 @@ cython_debug/
 .idea/
 .snow/
 .omc/
+.claude/
 *.swp
 *.swo
 *~
@@ -148,10 +149,10 @@ cython_debug/
 .DS_Store
 Thumbs.db
 
-# Poker CLI - 项目级配置（含敏感信息，不提交）
+# Poker CLI - 项目级配置
 .aisec/config.toml
 
 # 允许提交 example 文件（不忽略 .aisec/config.toml.example）
 
-# 内部 TODO / 计划文档（不公开）
+# TODO / 计划文档（不公开）
 AI_SECURITY_CLI_TODO.md

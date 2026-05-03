@@ -1,6 +1,7 @@
 """交互式 REPL：/cmd / !cmd / chat 三类输入分发。"""
 import shlex
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
@@ -10,7 +11,7 @@ from rich.table import Table
 from rich.text import Text
 
 from poker.agent.llm import create_chat_model
-from poker.agent.runtime import restore_session, stream_agent
+from poker.agent.runtime import restore_session, stream_agent, stream_agent_long
 from poker.agent.tools import set_project_root
 from poker.capabilities.scan.engine import scan_path
 from poker.capabilities.scan.report import (
@@ -38,11 +39,16 @@ console = Console()
 
 
 class _ReplState:
-    """REPL 会话状态：tracked cwd + session id。"""
+    """REPL 会话状态：tracked cwd + session id。
+
+    `session_id` 默认是进程启动时间戳（保证不同进程互不串台），
+    `/resume` 时切换为选中 session 的 id，让追加的对话挂到原 session 上。
+    chat 写盘时透传 `session_id` 字段，下次 load_chat_sessions 据此分组。
+    """
 
     def __init__(self) -> None:
         self.cwd: Path = Path.cwd().resolve()
-        self.session_id: str = "repl"
+        self.session_id: str = datetime.now(timezone.utc).isoformat()
 
 
 def start_repl() -> None:
@@ -81,14 +87,36 @@ def start_repl() -> None:
             console.print("[red]未配置 API key，请先运行 poker init 或设置环境变量[/red]")
             continue
 
-        append_chat(state.cwd, "user", user_input)
+        # 末尾 --simple 走原单轮 stream_agent；其他默认长链路 plan-execute-reflect
+        use_simple = user_input.endswith(" --simple") or user_input == "--simple"
+        chat_input = user_input.removesuffix(" --simple").rstrip() if use_simple else user_input
+        if not chat_input:
+            continue
+
+        append_chat(state.cwd, "user", chat_input, session_id=state.session_id)
+        text = Text()
         try:
-            text = Text()
-            with Live(Panel(text, title="Poker", border_style="green"), console=console, refresh_per_second=8) as live:
-                for token, _ in stream_agent(llm, user_input, state.session_id):
-                    text.append(token)
-                    live.update(Panel(text, title="Poker", border_style="green"))
-            append_chat(state.cwd, "assistant", str(text))
+            with Live(
+                Panel(text, title="Poker", border_style="green"),
+                console=console,
+                refresh_per_second=8,
+            ) as live:
+                if use_simple:
+                    for token, _ in stream_agent(llm, chat_input, state.session_id):
+                        text.append(token)
+                        live.update(Panel(text, title="Poker", border_style="green"))
+                else:
+                    for token, _, round_idx in stream_agent_long(
+                        llm, chat_input, state.session_id
+                    ):
+                        text.append(token)
+                        title = f"Poker · Round {round_idx}" if round_idx > 1 else "Poker"
+                        live.update(Panel(text, title=title, border_style="green"))
+            append_chat(state.cwd, "assistant", str(text), session_id=state.session_id)
+        except KeyboardInterrupt:
+            console.print("\n[yellow][已中断][/yellow]")
+            if str(text):
+                append_chat(state.cwd, "assistant", str(text), session_id=state.session_id)
         except Exception as e:
             console.print(f"[red]Agent 错误: {e}[/red]")
 
@@ -121,6 +149,22 @@ def _handle_command(input_str: str, config, state: _ReplState, llm) -> bool:
 
     if cmd == "trace":
         _cmd_trace(args, state)
+        return True
+
+    if cmd == "explain":
+        _cmd_explain(args, state, llm)
+        return True
+
+    if cmd == "triage":
+        _cmd_triage(state, llm)
+        return True
+
+    if cmd == "investigate":
+        _cmd_investigate(args, state, llm)
+        return True
+
+    if cmd == "threat-model":
+        _cmd_threat_model(state, llm)
         return True
 
     if cmd == "resume":
@@ -302,6 +346,119 @@ def _cmd_trace(args_str: str, state: _ReplState) -> None:
         run_trace(parts[0], state.cwd, console)
     except Exception as e:
         console.print(f"[red]/trace 错误: {e}[/red]")
+
+
+def _cmd_explain(args_str: str, state: _ReplState, llm) -> None:
+    """REPL /explain <finding-id>：用项目上下文解释 finding。
+
+    finding-id 是 /scan 表格里第一列的 8 位短 hash；支持前缀匹配。
+    无 LLM / 找不到 / 多匹配 / LLM 调用失败均由 capabilities 内部友好处理。
+    """
+    from poker.capabilities.explain import explain_finding
+
+    parts = shlex.split(args_str) if args_str else []
+    finding_id = parts[0] if parts else ""
+    try:
+        explain_finding(finding_id, state.cwd, llm, console)
+    except Exception as e:
+        console.print(f"[red]/explain 错误: {e}[/red]")
+
+
+def _cmd_triage(state: _ReplState, llm) -> None:
+    """REPL /triage：对未 triage 的 finding 逐条决策；LLM 给优先级建议。
+
+    LLM 失败 → 退化为无建议人工 triage；select_one Esc/Ctrl+C → 已选保留。
+    """
+    from poker.capabilities.triage import interactive_triage
+
+    try:
+        interactive_triage(state.cwd, llm, console)
+    except Exception as e:
+        console.print(f"[red]/triage 错误: {e}[/red]")
+
+
+def _cmd_investigate(args_str: str, state: _ReplState, llm) -> None:
+    """REPL /investigate <topic> [--single|--multi]：三档分发。
+
+    - 默认（auto）：先调 classifier 一次轻量 LLM 分类，simple→单 agent，complex→多 agent
+    - --single：强制单 agent（Phase 4-4 run_investigation）
+    - --multi： 强制多 agent（Phase 4-7 run_multi_agent_investigation）
+    - --single / --multi 互斥；classifier 失败 → 默默退化 single
+    """
+    try:
+        tokens = shlex.split(args_str) if args_str else []
+    except ValueError as e:
+        console.print(f"[red]/investigate 参数解析错误: {e}[/red]")
+        return
+
+    use_single = "--single" in tokens
+    use_multi = "--multi" in tokens
+    if use_single and use_multi:
+        console.print("[red]/investigate 错误: --single 和 --multi 互斥[/red]")
+        return
+
+    topic_tokens = [t for t in tokens if t not in ("--single", "--multi")]
+    topic = " ".join(topic_tokens)
+
+    if use_single:
+        _dispatch_single(topic, state, llm)
+        return
+
+    if use_multi:
+        _dispatch_multi(topic, state, llm)
+        return
+
+    # auto 档：classify → 分发
+    if not topic.strip():
+        console.print("[yellow]/investigate 需要主题[/yellow]")
+        return
+    if llm is None:
+        console.print("[red]未配置 LLM；/investigate 需要 API key[/red]")
+        return
+
+    from poker.capabilities.multi_agent.classifier import classify_topic
+
+    console.print("[dim][auto] 分析 topic 复杂度 ...[/dim]")
+    label = classify_topic(topic, llm)
+    console.print(f"[dim][auto] 分类: {label}[/dim]")
+
+    if label == "complex":
+        _dispatch_multi(topic, state, llm)
+    else:
+        _dispatch_single(topic, state, llm)
+
+
+def _dispatch_single(topic: str, state: _ReplState, llm) -> None:
+    """单 Agent 路径（Phase 4-4 run_investigation）。"""
+    from poker.capabilities.investigate import run_investigation
+
+    try:
+        run_investigation(topic, state.cwd, llm, console)
+    except Exception as e:
+        console.print(f"[red]/investigate 错误: {e}[/red]")
+
+
+def _dispatch_multi(topic: str, state: _ReplState, llm) -> None:
+    """多 Agent 路径（Phase 4-7 run_multi_agent_investigation）。"""
+    from poker.capabilities.multi_agent import run_multi_agent_investigation
+
+    try:
+        run_multi_agent_investigation(topic, state.cwd, llm, console)
+    except Exception as e:
+        console.print(f"[red]/investigate 错误: {e}[/red]")
+
+
+def _cmd_threat_model(state: _ReplState, llm) -> None:
+    """REPL /threat-model：基于已有产出输出 STRIDE 风格威胁模型 markdown 报告。
+
+    没产出 → 提示先做基础调查；Ctrl+C / 异常都把已生成内容落盘。
+    """
+    from poker.capabilities.threat_model import run_threat_model
+
+    try:
+        run_threat_model(state.cwd, llm, console)
+    except Exception as e:
+        console.print(f"[red]/threat-model 错误: {e}[/red]")
 
 
 def _cmd_resume(args_str: str, state: _ReplState) -> None:

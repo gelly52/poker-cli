@@ -3,7 +3,7 @@
 命令列表直接复用 poker.ui.prompt 的 COMMANDS（补全菜单的同一份数据），
 新加 / 命令只需改 prompt.COMMANDS 一处，自动同步到补全和 /help。
 """
-from rich.console import Console
+from rich.console import Console, Group
 from rich.table import Table
 from rich.text import Text
 
@@ -23,6 +23,18 @@ _EXTRA_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
 ]
 
 
+def _build_syntax_legend() -> Text:
+    """命令清单底部的参数语法说明。"""
+    accent = f"bold {ACCENT}"
+    legend = Text()
+    legend.append("参数语法  ", style="bold")
+    legend.append("<x>",    style=accent); legend.append(" 必填    ", style="dim")
+    legend.append("[x]",    style=accent); legend.append(" 可选    ", style="dim")
+    legend.append("a|b|c",  style=accent); legend.append(" 枚举    ", style="dim")
+    legend.append("--flag", style=accent); legend.append(" 开关",     style="dim")
+    return legend
+
+
 def render_help(console: Console) -> None:
     table = Table.grid(padding=(0, 2))
     table.add_column(style=f"bold {ACCENT}", no_wrap=True)
@@ -38,4 +50,5 @@ def render_help(console: Console) -> None:
         for cmd, desc in items:
             table.add_row(f"  {cmd}", desc)
 
-    console.print(accent_panel(table, "Help · 命令清单"))
+    body = Group(table, Text(""), _build_syntax_legend())
+    console.print(accent_panel(body, "Help · 命令清单"))

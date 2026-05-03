@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "AI security agent CLI for auditing LLM applications and agent projects"
 authors = ["Poker CLI Author"]
 readme = "README.md"
-packages = [{include = "poker"}]
+packages = [
+    {include = "poker"},
+    {include = "poker_observer"},
+]
 
 [tool.poetry.dependencies]
 python = "^3.10"

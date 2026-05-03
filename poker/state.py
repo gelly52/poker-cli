@@ -25,6 +25,9 @@ _TRIAGES_FILE = "triages.json"
 _AUDIT_LOG = "audit.jsonl"
 _BACKUPS_DIR = "backups"
 _REDTEAM_DIR = "redteam"
+_INVESTIGATIONS_DIR = "investigations"
+_THREAT_MODEL_DIR = "threat_models"
+_MULTI_AGENT_DIR = "multi_agent_runs"
 
 _VALID_TRIAGE_STATES = frozenset({"accepted", "ignored", "fixed"})
 
@@ -50,10 +53,21 @@ def _now_iso() -> str:
 
 # ---------- chat 历史 ----------
 
-def append_chat(project_root: Path, role: str, content: str) -> None:
-    """追加一条 chat 历史。role ∈ {user, assistant, system}。"""
+def append_chat(
+    project_root: Path,
+    role: str,
+    content: str,
+    session_id: str | None = None,
+) -> None:
+    """追加一条 chat 历史。role ∈ {user, assistant, system}。
+
+    session_id 持久化到 jsonl，使 load_chat_sessions 能按"会话归属"而非纯时间 gap 切窗口。
+    `/resume` 切到旧 session 后追加的对话仍归到原 session_id，下次打开能正确接续。
+    """
     path = get_state_dir(project_root) / _CHAT_FILE
-    record = {"ts": _now_iso(), "role": role, "content": content}
+    record: dict = {"ts": _now_iso(), "role": role, "content": content}
+    if session_id:
+        record["session_id"] = session_id
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
@@ -77,15 +91,44 @@ def load_chat(project_root: Path, limit: int = 50) -> list[dict]:
 
 
 def load_chat_sessions(project_root: Path, gap_minutes: int = 30) -> list[dict]:
-    """按时间 gap 切分 chat_history.jsonl 成多个上下文窗口；最新在前。
+    """切分 chat_history.jsonl 成多个上下文窗口；最新在前。
+
+    优先按 record.session_id 分组（新格式）；无 session_id 字段的旧 record
+    回落到时间 gap 切（向后兼容）。如果 legacy group 的首条 ts 跟某个 session_id
+    相同，自动合并到一起 —— 这种情况发生在用户先用旧格式聊过、之后某次 `/resume`
+    选中那段历史并继续追加的场景。
 
     每个 session: {id, start_ts, preview, messages: list[record]}。
-    向后兼容旧数据：JSONL 字段不变，gap 切分纯靠 ts。
     """
     records = load_chat(project_root, limit=10_000)
     if not records:
         return []
 
+    by_session: dict[str, list[dict]] = {}
+    legacy: list[dict] = []
+    for r in records:
+        sid = r.get("session_id")
+        if sid:
+            by_session.setdefault(sid, []).append(r)
+        else:
+            legacy.append(r)
+
+    for group in _split_legacy_by_gap(legacy, gap_minutes):
+        first_ts = group[0].get("ts", "") if group else ""
+        if not first_ts:
+            continue
+        # 同 ts 已存在 by_session（即 /resume 后追加的延续）→ legacy 在前合并
+        by_session[first_ts] = group + by_session.get(first_ts, [])
+
+    sessions = [_build_session(g) for g in by_session.values() if g]
+    sessions.sort(key=lambda s: s["start_ts"], reverse=True)
+    return sessions
+
+
+def _split_legacy_by_gap(records: list[dict], gap_minutes: int) -> list[list[dict]]:
+    """按时间 gap 切 legacy（无 session_id）records；旧逻辑保留。"""
+    if not records:
+        return []
     gap = timedelta(minutes=gap_minutes)
     groups: list[list[dict]] = [[records[0]]]
     for prev, curr in zip(records, records[1:]):
@@ -99,17 +142,18 @@ def load_chat_sessions(project_root: Path, gap_minutes: int = 30) -> list[dict]:
             groups.append([curr])
         else:
             groups[-1].append(curr)
-
-    sessions = [_build_session(g) for g in groups]
-    return list(reversed(sessions))  # 最新在前
+    return groups
 
 
 def _build_session(records: list[dict]) -> dict:
-    first_user = next((r for r in records if r.get("role") == "user"), records[0])
+    first = records[0]
+    # session_id 字段优先（新格式）；缺失回落到首条 ts（旧格式 / 兼容路径）
+    sid = first.get("session_id") or first.get("ts", "")
+    first_user = next((r for r in records if r.get("role") == "user"), first)
     preview = (first_user.get("content") or "").strip().splitlines()[0] if first_user else ""
     return {
-        "id": records[0].get("ts", ""),
-        "start_ts": records[0].get("ts", ""),
+        "id": sid,
+        "start_ts": first.get("ts", ""),
         "preview": preview[:60] or "(空)",
         "messages": records,
     }
@@ -248,6 +292,129 @@ def save_redteam_run(project_root: Path, prompt_name: str, payload: dict) -> Pat
         json.dumps(full, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    return path
+
+
+# ---------- investigations ----------
+
+def save_investigation(project_root: Path, topic: str, markdown: str) -> Path:
+    """落盘一次 /investigate 报告到 investigations/<topic>_<ts>.md。
+
+    topic 经文件名清洗（保留字母数字下划线短横，截断到 64）；ts 是 unix 秒。
+    返回写入的文件路径。
+    """
+    inv_dir = get_state_dir(project_root) / _INVESTIGATIONS_DIR
+    inv_dir.mkdir(exist_ok=True)
+    ts = int(time.time())
+    safe_topic = _safe_filename(topic)
+    path = inv_dir / f"{safe_topic}_{ts}.md"
+    header = f"<!-- topic: {topic}\n     ts: {_now_iso()} -->\n\n"
+    path.write_text(header + markdown, encoding="utf-8")
+    return path
+
+
+def load_investigation_records(project_root: Path, limit: int = 5) -> list[dict]:
+    """读 investigations/ 最近 limit 条报告（按 mtime 倒序），仅取 topic + 首段摘要。
+
+    返回每条 {path, topic, snippet}；解析失败的条目跳过。
+    """
+    inv_dir = get_state_dir(project_root) / _INVESTIGATIONS_DIR
+    if not inv_dir.exists():
+        return []
+    files = sorted(
+        inv_dir.glob("*.md"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    out: list[dict] = []
+    for p in files[:limit]:
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        topic = _parse_investigation_topic(text)
+        snippet = _extract_md_snippet(text)
+        out.append({"path": str(p), "topic": topic, "snippet": snippet})
+    return out
+
+
+def _parse_investigation_topic(text: str) -> str:
+    """从 save_investigation 写出的 `<!-- topic: ... -->` 注释里提取 topic。"""
+    first = text.split("\n", 1)[0]
+    marker = "<!-- topic:"
+    if first.startswith(marker):
+        rest = first[len(marker):]
+        if "-->" in rest:
+            rest = rest.split("-->")[0]
+        return rest.strip()
+    return ""
+
+
+def _extract_md_snippet(text: str, length: int = 400) -> str:
+    """跳过头部 HTML 注释，取首个 markdown 章节前 length 字。"""
+    if "-->" in text[:512]:
+        text = text.split("-->", 1)[1]
+    text = text.lstrip()
+    return text[:length].rstrip()
+
+
+# ---------- audit records ----------
+
+def load_audit_records(project_root: Path, limit: int = 20) -> list[dict]:
+    """读 audits/ 下所有 audit JSON，返回最近 limit 条（按 mtime 倒序）。"""
+    audits_dir = get_state_dir(project_root) / _AUDITS_DIR
+    if not audits_dir.exists():
+        return []
+    files = sorted(
+        audits_dir.glob("*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    out: list[dict] = []
+    for p in files[:limit]:
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        out.append(data if isinstance(data, dict) else {"raw": data})
+    return out
+
+
+# ---------- 聚合 + threat model ----------
+
+def load_all_artifacts(project_root: Path) -> dict:
+    """聚合 scan / audit / triage / investigation 产出，供 /threat-model 综合分析。
+
+    返回 {findings, triages, audits, investigations}。任何子项失败都返回空。
+    """
+    return {
+        "findings": load_last_findings(project_root),
+        "triages": load_triages(project_root),
+        "audits": load_audit_records(project_root, limit=20),
+        "investigations": load_investigation_records(project_root, limit=5),
+    }
+
+
+def save_threat_model(project_root: Path, markdown: str) -> Path:
+    """落盘一次 /threat-model 报告到 threat_models/<ts>.md。"""
+    tm_dir = get_state_dir(project_root) / _THREAT_MODEL_DIR
+    tm_dir.mkdir(exist_ok=True)
+    ts = int(time.time())
+    path = tm_dir / f"{ts}.md"
+    header = f"<!-- threat-model\n     ts: {_now_iso()} -->\n\n"
+    path.write_text(header + markdown, encoding="utf-8")
+    return path
+
+
+def save_multi_agent_run(project_root: Path, topic: str, markdown: str) -> Path:
+    """落盘一次多 Agent 协作调查到 multi_agent_runs/<topic>_<ts>.md。"""
+    ma_dir = get_state_dir(project_root) / _MULTI_AGENT_DIR
+    ma_dir.mkdir(exist_ok=True)
+    ts = int(time.time())
+    safe_topic = _safe_filename(topic)
+    path = ma_dir / f"{safe_topic}_{ts}.md"
+    header = f"<!-- multi-agent\n     topic: {topic}\n     ts: {_now_iso()} -->\n\n"
+    path.write_text(header + markdown, encoding="utf-8")
     return path
 
 

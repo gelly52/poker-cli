@@ -17,15 +17,17 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.styles import Style
 
+from poker.ui.panels import ACCENT_HEX
+
 T = TypeVar("T")
 
 _LOAD_MORE = object()
 # title 用金色加粗；hint 不设任何颜色避免 Windows 终端把 ansibrightblack 误解为底色
 _STYLE = Style.from_dict(
     {
-        "menu.title": "bold #d7af00",
+        "menu.title": f"bold {ACCENT_HEX}",
         "menu.hint": "",
-        "menu.selected": "reverse bold #d7af00",
+        "menu.selected": f"reverse bold {ACCENT_HEX}",
     }
 )
 

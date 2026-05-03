@@ -8,6 +8,7 @@ REPL 启动 / !cd 后调用 set_project_root() 同步当前目标项目目录。
 """
 import re
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -422,4 +423,269 @@ def get_agent_tools() -> list:
         scan_project,
         write_file,
         apply_patch,
+    ]
+
+
+# ---------- 调查模式（/investigate）专用 ----------
+#
+# /investigate 给 LLM 注入一组"重型" capability 工具（scan / audit / trace /
+# read_findings），并通过 thread-local 状态控制总调用次数（默认 30），避免无限循环。
+# **thread-local**：多 Agent 协作时多个 Investigator 各自起线程，每个线程有独立预算，
+# 互不干扰；单线程主流程下行为跟模块级变量一致。
+
+_budget_state = threading.local()
+
+
+def set_investigation_budget(n: int) -> None:
+    """启动 / 关闭调查模式（当前线程）。n>0 启动并设置可用次数；n=0 关闭。"""
+    _budget_state.budget = max(0, int(n))
+    _budget_state.used = 0
+
+
+def investigation_tool_usage() -> tuple[int, int]:
+    """返回 (已用, 总预算)；未启动调查模式时返回 (0, 0)。"""
+    return getattr(_budget_state, "used", 0), getattr(_budget_state, "budget", 0)
+
+
+def _consume_investigation_budget(name: str) -> str | None:
+    """消耗 1 次预算；返回 None=允许调用，否则返回错误字符串给 LLM。"""
+    budget = getattr(_budget_state, "budget", 0)
+    if budget <= 0:
+        return f"错误：{name} 仅在 /investigate 模式下可用"
+    used = getattr(_budget_state, "used", 0)
+    if used >= budget:
+        return (
+            f"错误：调查工具调用次数已达上限 ({budget})；"
+            "请基于已收集信息生成最终报告，不要再调工具"
+        )
+    _budget_state.used = used + 1
+    return None
+
+
+@tool
+def run_scan_tool(target: str = "") -> str:
+    """跑安全扫描。target 留空 = 整个项目。返回 finding 摘要列表（含 8 位短 ID）。
+
+    结果会同步落到 .poker/state/<hash>/last_scan.json。仅在 /investigate 模式下可用。
+    """
+    err = _consume_investigation_budget("run_scan_tool")
+    if err:
+        return err
+    _audit("run_scan_tool", target=target)
+
+    from poker.capabilities.explain import compute_finding_id
+    from poker.capabilities.scan.engine import scan_path
+    from poker.state import save_findings
+
+    path = _resolve_within_root(target)
+    if path is None:
+        return f"错误：路径越界 {target}"
+    if not path.exists():
+        return f"错误：路径不存在 {path}"
+
+    try:
+        findings = scan_path(path)
+    except Exception as e:
+        return f"错误：扫描失败 {e}"
+    save_findings(_project_root, findings)
+
+    if not findings:
+        return f"扫描完成。{path} 无 finding。"
+
+    lines = [f"扫描完成。{path} 共 {len(findings)} 条 finding（精简列表）："]
+    for f in findings[:50]:
+        fid = compute_finding_id(f)
+        lines.append(
+            f"  [{f.severity.value:>8}] {fid} {f.rule_id} "
+            f"@ {f.path}:{f.line}  -  {f.title}"
+        )
+    if len(findings) > 50:
+        lines.append(f"  ... 还有 {len(findings) - 50} 条；用 read_findings_tool 看完整")
+    return "\n".join(lines)
+
+
+@tool
+def run_audit_tool(dimension: str, target: str = "") -> str:
+    """跑深度审计。dimension ∈ tools / rag / mcp / prompt。返回静态启发式审计摘要。
+
+    target 当前忽略（按整项目扫）。仅在 /investigate 模式下可用，不会嵌套调用 LLM。
+    """
+    err = _consume_investigation_budget("run_audit_tool")
+    if err:
+        return err
+    _audit("run_audit_tool", dimension=dimension, target=target)
+
+    if dimension == "tools":
+        return _audit_tools_summary()
+    if dimension == "rag":
+        return _audit_rag_summary()
+    if dimension == "mcp":
+        return _audit_mcp_summary()
+    if dimension == "prompt":
+        return _audit_prompt_summary()
+    return f"错误：dimension 必须是 tools/rag/mcp/prompt，不是 {dimension!r}"
+
+
+def _audit_tools_summary() -> str:
+    from poker.capabilities.audit.tools import audit_tool, find_tools
+
+    items = find_tools(_project_root)
+    if not items:
+        return "audit tools: 未发现 LangChain @tool / Tool() / function calling schema。"
+    lines = [f"audit tools: 发现 {len(items)} 个工具："]
+    for t in items[:20]:
+        try:
+            res = audit_tool(t, llm=None)
+            risks = "; ".join(f"{r.severity}:{r.title}" for r in res.risks[:3]) or "no obvious risks"
+        except Exception as e:
+            risks = f"audit error: {e}"
+        lines.append(f"  - {t.name} @ {t.file}:{t.line}  [{risks}]")
+    if len(items) > 20:
+        lines.append(f"  ... 还有 {len(items) - 20} 个工具未列出")
+    return "\n".join(lines)
+
+
+def _audit_rag_summary() -> str:
+    from poker.capabilities.audit.rag import audit_rag, find_rag_components
+
+    items = find_rag_components(_project_root)
+    if not items:
+        return "audit rag: 未发现 RAG 组件（vectorstore / retriever / loader）。"
+    lines = [f"audit rag: 发现 {len(items)} 个 RAG 组件："]
+    for c in items[:15]:
+        try:
+            res = audit_rag(c, llm=None)
+            risks = "; ".join(f"{r.severity}:{r.title}" for r in res.risks[:2]) or "no obvious risks"
+        except Exception as e:
+            risks = f"audit error: {e}"
+        lines.append(f"  - [{c.kind}] {c.method} @ {c.file}:{c.line}  [{risks}]")
+    return "\n".join(lines)
+
+
+def _audit_mcp_summary() -> str:
+    from poker.capabilities.audit.mcp import audit_mcp, find_mcp_configs
+
+    infos = find_mcp_configs(_project_root)
+    if not infos:
+        return "audit mcp: 未发现 MCP 配置或 server 实例。"
+    lines = [f"audit mcp: 发现 {len(infos)} 个 MCP 配置："]
+    for info in infos[:10]:
+        try:
+            res = audit_mcp(info, llm=None)
+            risks = "; ".join(f"{r.severity}:{r.title}" for r in res.risks[:3]) or "no obvious risks"
+        except Exception as e:
+            risks = f"audit error: {e}"
+        lines.append(
+            f"  - [{info.kind}] {info.file} servers={len(info.servers)}  [{risks}]"
+        )
+    return "\n".join(lines)
+
+
+def _audit_prompt_summary() -> str:
+    from poker.capabilities.audit.prompt import audit_prompt, find_prompts
+
+    items = find_prompts(_project_root)
+    if not items:
+        return "audit prompt: 未发现可疑 prompt。"
+    lines = [f"audit prompt: 发现 {len(items)} 处 prompt："]
+    for p in items[:15]:
+        try:
+            res = audit_prompt(p, llm=None)
+            risks = "; ".join(f"{r.severity}:{r.title}" for r in res.risks[:3]) or "no obvious risks"
+        except Exception as e:
+            risks = f"audit error: {e}"
+        snippet = (p.content or "").strip().splitlines()[0][:60] if p.content else ""
+        lines.append(f"  - [{p.role or '?'}] {p.file}:{p.line}  '{snippet}'  [{risks}]")
+    return "\n".join(lines)
+
+
+@tool
+def run_trace_tool(target: str) -> str:
+    """数据流追踪。target 格式 'file.py:行:变量'，例：agent.py:21:user_input。
+
+    返回 hop 列表 + 最终判断（safe/warn/danger）。仅在 /investigate 模式下可用。
+    """
+    err = _consume_investigation_budget("run_trace_tool")
+    if err:
+        return err
+    _audit("run_trace_tool", target=target)
+
+    parts = target.rsplit(":", 2)
+    if len(parts) != 3:
+        return "错误：参数格式 'file.py:行:变量'，例 agent.py:21:user_input"
+    file_part, line_part, var = parts
+    try:
+        line = int(line_part)
+    except ValueError:
+        return f"错误：行号不是整数 {line_part!r}"
+
+    file_path = _resolve_within_root(file_part)
+    if file_path is None:
+        return f"错误：路径越界 {file_part}"
+    if not file_path.is_file():
+        return f"错误：不是文件 {file_path}"
+
+    from poker.capabilities.trace import trace_var
+
+    try:
+        result = trace_var(file_path, line, var, project_root=_project_root)
+    except Exception as e:
+        return f"错误：trace 失败 {e}"
+
+    lines = [f"trace {target}: verdict={result.overall}, function={result.function_name or '?'}"]
+    for hop in result.hops[:30]:
+        loc = f"{hop.file or file_part}:{hop.line}"
+        lines.append(f"  - {loc}  {hop.var}  {hop.detail}")
+    if len(result.hops) > 30:
+        lines.append(f"  ... 还有 {len(result.hops) - 30} 条 hop")
+    if result.sink_hit is not None:
+        lines.append(
+            f"  ⚠ 命中危险 sink: {result.sink_hit.name} ({result.sink_hit.severity})"
+        )
+    return "\n".join(lines)
+
+
+@tool
+def read_findings_tool() -> str:
+    """读取最近一次 /scan 的全部 finding（精简）。仅在 /investigate 模式下可用。"""
+    err = _consume_investigation_budget("read_findings_tool")
+    if err:
+        return err
+    _audit("read_findings_tool")
+
+    from poker.capabilities.explain import compute_finding_id
+    from poker.state import load_last_findings
+
+    findings = load_last_findings(_project_root)
+    if not findings:
+        return "（最近没有 scan 结果；请先调 run_scan_tool）"
+
+    lines = [f"最近 scan 共 {len(findings)} 条 finding："]
+    for f in findings[:100]:
+        fid = compute_finding_id(f)
+        lines.append(
+            f"  [{f.get('severity', ''):>8}] {fid} {f.get('rule_id', '')} "
+            f"@ {f.get('path', '')}:{f.get('line', '')}  -  {f.get('title', '')}"
+        )
+    if len(findings) > 100:
+        lines.append(f"  ... 还有 {len(findings) - 100} 条")
+    return "\n".join(lines)
+
+
+def get_investigate_tools() -> list:
+    """调查模式的工具集：常规读项目 + 4 个 capability 工具。
+
+    write_file / apply_patch 不暴露给调查（调查只读）。
+    """
+    return [
+        list_files,
+        read_file,
+        search_text,
+        search_code,
+        git_diff,
+        git_status,
+        run_scan_tool,
+        run_audit_tool,
+        run_trace_tool,
+        read_findings_tool,
     ]

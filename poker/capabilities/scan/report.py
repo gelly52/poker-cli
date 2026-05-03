@@ -78,10 +78,13 @@ def print_table(console: Console, findings: list[Finding]) -> None:
 
 
 def print_table_grouped(console: Console, findings: list[Finding]) -> None:
-    """按 severity 分组渲染：每个等级一张子表 + 颜色区分。"""
+    """按 severity 分组渲染：每个等级一张子表 + 颜色区分 + 短 hash ID 列（供 /explain 用）。"""
     if not findings:
         console.print("[green]No findings detected.[/green]")
         return
+
+    # 局部 import：避免 capabilities/scan 反向依赖 capabilities/explain 顶层
+    from poker.capabilities.explain import compute_finding_id
 
     grouped: dict[str, list[Finding]] = {sev: [] for sev in SEVERITY_ORDER}
     for f in findings:
@@ -98,11 +101,17 @@ def print_table_grouped(console: Console, findings: list[Finding]) -> None:
         first = False
         console.print(f"[{style}]== {sev.upper()} ({len(items)}) ==[/{style}]")
         table = Table(show_header=True, header_style="bold")
+        table.add_column("ID", style="bold cyan", no_wrap=True)
         table.add_column("Rule", style="bold")
         table.add_column("Location")
         table.add_column("Finding")
         for f in items:
-            table.add_row(f.rule_id, f"{f.path}:{f.line}", f.title)
+            table.add_row(
+                compute_finding_id(f),
+                f.rule_id,
+                f"{f.path}:{f.line}",
+                f.title,
+            )
         console.print(table)
 
 

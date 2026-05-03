@@ -11,3 +11,23 @@ SECURITY_AGENT_PROMPT = """\
 
 你可以使用工具来扫描项目、查找安全风险。当用户询问项目安全问题时，优先使用扫描工具获取实际结果，再基于结果进行分析和解释。\
 """
+
+
+REFLECTION_PROMPT = """\
+请基于上面的对话和工具调用结果，反思当前任务进度。
+
+**严格按下面的格式输出（必须包含 <reflection> 标签）：**
+
+<reflection>
+status: done | continue | failed
+reason: 一句话原因
+next_step: 如果 status=continue，下一步要做什么；其他状态留空
+</reflection>
+
+判定规则：
+- done：已经充分回答用户问题，无需继续调用工具
+- continue：信息不足，还需要调用工具或进一步分析
+- failed：工具不可用 / 信息无法获取 / 任务超出能力范围，无法继续
+
+只输出 <reflection> 标签内容即可，不要重复用户问题或之前的分析。\
+"""
